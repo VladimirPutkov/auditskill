@@ -1,13 +1,16 @@
 """Security scanning rules organised by category for SKILL.md auditing.
 
 Each rule defines a regex pattern that flags potentially dangerous content
-in a SKILL.md file.  Rules are grouped into five categories:
+in a SKILL.md file.  Rules are grouped into seven categories:
 
 - **PROMPT_INJECTION** — attempts to hijack agent behaviour.
 - **DATA_EXFILTRATION** — attempts to leak sensitive data externally.
 - **UNSAFE_OPERATIONS** — destructive system/shell/SQL commands.
 - **HIDDEN_INSTRUCTIONS** — steganographic or obfuscated instructions.
 - **SCOPE_CREEP** — over-broad permission or capability claims.
+- **SUPPLY_CHAIN** — installing/executing code fetched from remote sources.
+- **AGENT_CAPTURE** — rerouting agent traffic, spawning resident daemons,
+  or demanding mandatory gating through a single external service.
 
 All patterns are designed for ``re.IGNORECASE`` and use raw strings.
 """
@@ -84,10 +87,15 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
         rule_id="SEC-003",
         category="prompt_injection",
         severity="critical",
-        pattern=r"(system\s*prompt\s*override|override\s+.*system|new\s+system\s+prompt)",
+        pattern=(
+            r"(system\s*prompt\s*override"
+            r"|(?<!not\s)(?<!n't\s)(?<!never\s)override\s+[^\n]{0,60}system"
+            r"|new\s+system\s+prompt)"
+        ),
         description=(
             "Detects direct attempts to replace or override the system "
-            "prompt governing agent behaviour."
+            "prompt governing agent behaviour.  Negated statements "
+            "('does not override your system…') are excluded."
         ),
     ),
     SecurityRule(
@@ -104,10 +112,15 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
         rule_id="SEC-005",
         category="prompt_injection",
         severity="critical",
-        pattern=r"(do\s+not\s+follow\s+.*rules|bypass\s+.*restrictions|override\s+.*safety)",
+        pattern=(
+            r"(do\s+not\s+follow\s+.*rules"
+            r"|bypass\s+.*restrictions"
+            r"|(?<!not\s)(?<!n't\s)(?<!never\s)override\s+[^\n]{0,60}safety)"
+        ),
         description=(
             "Detects explicit instructions to bypass safety guardrails "
-            "or restriction rules."
+            "or restriction rules.  Negated statements ('does not "
+            "override … safety …') are excluded."
         ),
     ),
 ]
@@ -372,6 +385,98 @@ _SCOPE_CREEP_RULES: list[SecurityRule] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Category 6 — SUPPLY CHAIN  (critical)
+# ---------------------------------------------------------------------------
+# Motivated by real registry findings: skills instructing agents to install
+# packages straight from a hosted URL/tarball, or to pipe remote scripts into
+# a shell.  The danger lives *inside* code blocks, so these rules are NOT
+# code-block-safe.
+
+_SUPPLY_CHAIN_RULES: list[SecurityRule] = [
+    SecurityRule(
+        rule_id="SEC-026",
+        category="supply_chain",
+        severity="critical",
+        pattern=(
+            r"(pip3?|pipx|npm)\s+install\s+[^\n]*"
+            r"(https?://|\$\{?[A-Z_]*URL|\.tar\.gz|\.whl|\.zip)"
+        ),
+        description=(
+            "Detects package installation from a remote URL, URL-bearing "
+            "variable, or tarball/wheel/zip archive — arbitrary code "
+            "execution from an unvetted source.  Ordinary installs from "
+            "a package index ('pip install fastapi') do not match."
+        ),
+        is_code_block_safe=False,
+    ),
+    SecurityRule(
+        rule_id="SEC-027",
+        category="supply_chain",
+        severity="critical",
+        pattern=r"(curl|wget)\s+[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?)\b",
+        description=(
+            "Detects pipe-to-shell installation (curl/wget piped into a "
+            "shell or Python interpreter) — remote code executed without "
+            "inspection or checksum verification."
+        ),
+        is_code_block_safe=False,
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Category 7 — AGENT CAPTURE  (high/medium)
+# ---------------------------------------------------------------------------
+# Detects skills that try to take structural control of the agent runtime:
+# rerouting all network traffic through a proxy, leaving resident background
+# processes, or demanding that every action be gated through one external
+# service (a single point of failure *and* control).
+
+_AGENT_CAPTURE_RULES: list[SecurityRule] = [
+    SecurityRule(
+        rule_id="SEC-028",
+        category="agent_capture",
+        severity="high",
+        pattern=r"\b(export\s+)?(HTTP_PROXY|HTTPS_PROXY|ALL_PROXY)\s*=",
+        description=(
+            "Detects manipulation of proxy environment variables "
+            "(HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) — reroutes the agent's "
+            "entire network traffic through a third-party intermediary."
+        ),
+        is_code_block_safe=False,
+    ),
+    SecurityRule(
+        rule_id="SEC-029",
+        category="agent_capture",
+        severity="high",
+        pattern=r"\b(nohup|disown)\b",
+        description=(
+            "Detects instructions to launch detached background daemons "
+            "(nohup/disown) that outlive the agent session and keep "
+            "running on the host unattended."
+        ),
+        is_code_block_safe=False,
+    ),
+    SecurityRule(
+        rule_id="SEC-030",
+        category="agent_capture",
+        severity="medium",
+        pattern=(
+            r"(before\s+(every|each)\s+[^\n]{0,40}\bcall\b"
+            r"|must\s+call\s+[^\n]{0,30}\bfirst\b"
+            r"|never\s+[\"'“‘]?(try|use)\b[^\n]{0,30}\b(anyway|without)\b"
+            r"|fail[\s-]closed)"
+        ),
+        description=(
+            "Detects mandatory-gating language that makes the agent "
+            "dependent on a single external service before every action "
+            "('must call X first', 'never try the tool anyway', 'fail "
+            "closed') — a single point of failure and control."
+        ),
+        is_code_block_safe=True,
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Aggregate registry
 # ---------------------------------------------------------------------------
 
@@ -381,6 +486,8 @@ _ALL_RULES: list[SecurityRule] = (
     + _UNSAFE_OPERATIONS_RULES
     + _HIDDEN_INSTRUCTIONS_RULES
     + _SCOPE_CREEP_RULES
+    + _SUPPLY_CHAIN_RULES
+    + _AGENT_CAPTURE_RULES
 )
 
 # Build a quick lookup index by category (computed once at import time).
@@ -395,7 +502,7 @@ for _rule in _ALL_RULES:
 
 
 def get_all_rules() -> list[SecurityRule]:
-    """Return all 25 security rules across every category.
+    """Return all 30 security rules across every category.
 
     The returned list is a shallow copy so callers can filter or sort
     without mutating the module-level registry.
@@ -408,8 +515,8 @@ def get_rules_by_category(category: str) -> list[SecurityRule]:
 
     Args:
         category: One of ``prompt_injection``, ``data_exfiltration``,
-            ``unsafe_operations``, ``hidden_instructions``, or
-            ``scope_creep``.
+            ``unsafe_operations``, ``hidden_instructions``,
+            ``scope_creep``, ``supply_chain``, or ``agent_capture``.
 
     Returns:
         A list of matching :class:`SecurityRule` instances.  If the

@@ -69,9 +69,13 @@ _DESCRIPTIVE_HEADING_KEYWORDS: tuple[str, ...] = (
 # Only these categories are suppressed inside descriptive sections.  Prompt
 # injection, data exfiltration, and hidden-instruction rules are NEVER
 # suppressed by section context — hiding those in a "Limitations" section is
-# itself suspicious.
+# itself suspicious.  agent_capture is included only for its prose-level
+# rule (SEC-030, mandatory-gating language): a doc that *discusses* gating
+# patterns under "Limitations"/"Examples" is not itself capturing the agent.
+# The supply-chain and proxy/daemon rules are code-block-unsafe and are
+# never suppressed.
 _DESCRIPTIVE_SKIP_CATEGORIES: frozenset[str] = frozenset(
-    {"unsafe_operations", "scope_creep"}
+    {"unsafe_operations", "scope_creep", "agent_capture"}
 )
 
 _HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.*)")

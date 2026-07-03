@@ -174,6 +174,21 @@ async def test_benign_security_skill_passes_end_to_end():
     assert r.verdict in ("PASS_BASIC_AUDIT", "PASS_WITH_WARNINGS")
 
 
+async def test_supply_chain_skill_fails():
+    # Agent-capture fixture: pip-install-from-URL, pipe-to-shell, proxy
+    # redirection, background daemon, mandatory-gating prose.
+    r = await run_audit(_read("supply_chain_skill.md"), mode="safe_static")
+    assert r.verdict == "FAILS_BASIC_AUDIT"
+    cats = {f.category for f in r.security.findings}
+    assert "supply_chain" in cats
+    assert "agent_capture" in cats
+    # The negated disclaimer ("does not override your system…") must NOT
+    # trip the prompt-injection rules — that would be a false positive.
+    fired = {f.rule_id for f in r.security.findings}
+    assert "SEC-003" not in fired
+    assert "SEC-005" not in fired
+
+
 async def test_state_changing_methods_never_executed():
     # evil_skill declares POST/DELETE; liveness must skip them, never call them.
     r = await run_audit(_read("evil_skill.md"), mode="liveness")

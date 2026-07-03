@@ -45,7 +45,7 @@ AuditSkill is a deterministic, rule-based pipeline. **No LLM.** The agent sends 
 flowchart LR
     A["Agent discovers<br/>a SKILL.md"] --> B["POST /audit"]
     B --> C["Parse"]
-    C --> D["Security scan<br/>25 rules"]
+    C --> D["Security scan<br/>30 rules"]
     C --> E["Structure<br/>scoring"]
     C --> F["Scope<br/>analysis"]
     C --> G["Metadata<br/>check"]
@@ -55,7 +55,7 @@ flowchart LR
     J --> K["Return verdict +<br/>signed certificate"]
 ```
 
-### Security audit — 25 rules, 5 categories
+### Security audit — 30 rules, 7 categories
 
 | Category | Rules | Severity | What it catches |
 |---|---|---|---|
@@ -64,8 +64,12 @@ flowchart LR
 | Unsafe operations | SEC-011 – SEC-015 | High | `rm -rf`, `DROP TABLE`, `eval()`, `sudo`, disk-format commands |
 | Hidden instructions | SEC-016 – SEC-020 | High | Zero-width chars, bidi overrides, Base64 blobs, HTML comments with imperatives, IDN homoglyphs |
 | Scope creep | SEC-021 – SEC-025 | Medium | "Unlimited permission", "full control", auth bypass, unbounded scope claims |
+| Supply chain | SEC-026 – SEC-027 | Critical | Package installs from remote URLs/tarballs, pipe-to-shell bootstrap scripts |
+| Agent capture | SEC-028 – SEC-030 | High/Medium | Proxy-variable rewrites that reroute all agent traffic, detached background daemons, mandatory gating through a single external service |
 
-False-positive guard: patterns inside fenced code blocks and descriptive sections ("Limitations", "Detection Patterns") are excluded, so legitimate security tools are not flagged. This is regression-tested against the `benign_security_skill` fixture.
+The supply-chain and agent-capture categories came from auditing skills deployed in the wild: one "safety layer" skill instructs agents to install a tarball from its own server, reroute all traffic through its proxy, keep a background daemon alive, and halt all work whenever its endpoint is unreachable. Each of those instructions is now a distinct, line-numbered finding.
+
+False-positive guard: patterns inside fenced code blocks and descriptive sections ("Limitations", "Detection Patterns") are excluded, so legitimate security tools are not flagged. Negated statements ("this skill does **not** override your system instructions") are explicitly excluded from the prompt-injection rules. This is regression-tested against the `benign_security_skill` and `supply_chain_skill` fixtures.
 
 ### Context hygiene
 
@@ -159,14 +163,14 @@ export AUDITSKILL_KEY_ID=...
 uvicorn auditskill.api.main:app --reload --port 8000
 ```
 
-## Tests — 58 Passing
+## Tests — 70 Passing
 
 ```bash
 pip install -e ".[dev]"
 pytest -q
 ```
 
-The test suite covers: SSRF blocking (including decimal-encoded loopback and cloud-metadata targets), score renormalization, verdict boundaries, Ed25519 signature round-trip with tamper detection, the false-positive guard on a legitimate security skill, plain-Markdown parsing, and end-to-end verdicts on good/evil/benign/broken fixtures.
+The test suite covers: SSRF blocking (including decimal-encoded loopback and cloud-metadata targets), score renormalization, verdict boundaries, Ed25519 signature round-trip with tamper detection, the false-positive guard on a legitimate security skill, negative samples for every FP-prone rule (negated "does not override" phrasing, plain `pip install` from an index), plain-Markdown parsing, and end-to-end verdicts on good/evil/benign/broken/supply-chain fixtures.
 
 ---
 

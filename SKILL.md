@@ -34,7 +34,7 @@ curl -X POST https://auditskill.up.railway.app/audit \
   "security": {
     "score": 0,
     "risk_level": "critical",
-    "rules_checked": 25,
+    "rules_checked": 30,
     "rules_triggered": 3,
     "findings": [
       { "rule_id": "SEC-001", "severity": "critical", "category": "prompt_injection", "detail": "Attempt to override prior instructions" },
@@ -45,28 +45,10 @@ curl -X POST https://auditskill.up.railway.app/audit \
   "scope": { "score": 40, "breadth": "narrow" },
   "metadata": { "score": 20, "has_author": false },
   "liveness": { "score": null, "tested": 0, "alive": 0, "dead": 0 },
-  "context_cost": {
-    "tokens_estimate": 68,
-    "size_bytes": 272,
-    "density": "low",
-    "recommendation": "Information density is low: the file is large relative to its useful content (endpoints, examples, documentation sections). Consider whether you need it."
-  },
-  "issues": [
-    { "severity": "critical", "module": "security", "msg": "Attempt to override prior instructions" },
-    { "severity": "critical", "module": "security", "msg": "Instructions to send sensitive data to external destination" },
-    { "severity": "high", "module": "security", "msg": "HTML comment containing imperative verbs" }
-  ],
+  "context_cost": { "tokens_estimate": 68, "size_bytes": 272, "density": "low", "recommendation": "Information density is low relative to useful content. Consider whether you need it." },
+  "issues": [ { "severity": "critical", "module": "security", "msg": "Attempt to override prior instructions" }, "..." ],
   "certificate_id": "seal_e4f5a6b7c8d9",
-  "certificate": {
-    "certificate_id": "seal_e4f5a6b7c8d9",
-    "skill_name": "Helper",
-    "skill_hash": "sha256:a1b2c3...",
-    "verdict": "FAILS_BASIC_AUDIT",
-    "score": 12,
-    "mode": "safe_static",
-    "checks": { "structure": "fail", "security": "fail", "scope": "warning", "metadata": "fail" },
-    "signature": "ed25519:base64..."
-  },
+  "certificate": { "verdict": "FAILS_BASIC_AUDIT", "score": 12, "checks": { "structure": "fail", "security": "fail", "scope": "warning", "metadata": "fail" }, "signature": "ed25519:base64..." },
   "tested_at": "2026-07-02T23:00:00Z"
 }
 ```
@@ -91,16 +73,11 @@ curl -X POST https://auditskill.up.railway.app/audit \
   "verdict": "PASS_BASIC_AUDIT",
   "cached": false,
   "structure": { "score": 90, "has_name": true, "has_endpoints": true, "has_examples": true, "endpoint_count": 1, "example_count": 1, "findings": [] },
-  "security": { "score": 100, "risk_level": "none", "rules_checked": 25, "rules_triggered": 0, "findings": [] },
+  "security": { "score": 100, "risk_level": "none", "rules_checked": 30, "rules_triggered": 0, "findings": [] },
   "scope": { "score": 70, "breadth": "narrow" },
   "metadata": { "score": 80, "has_author": true },
   "liveness": { "score": null, "tested": 0, "alive": 0, "dead": 0 },
-  "context_cost": {
-    "tokens_estimate": 95,
-    "size_bytes": 380,
-    "density": "high",
-    "recommendation": "Compact and well-structured. Low context-window cost."
-  },
+  "context_cost": { "tokens_estimate": 95, "size_bytes": 380, "density": "high", "recommendation": "Compact and well-structured. Low context-window cost." },
   "issues": [],
   "certificate_id": "seal_ab12cd34ef56",
   "certificate": {
@@ -118,48 +95,55 @@ GET /discover
     `q`     (optional) — filter by name, description, or tags (case-insensitive).
     `mode`  (optional) — `safe_static` (default, fast) or `liveness`.
     `limit` (optional) — max entries to audit, 1–30, default 20.
-  Example:
+  Example (live snapshot — counts and scores change as the registry changes):
 ```bash
-curl "https://auditskill.up.railway.app/discover?q=weather&mode=safe_static"
+curl "https://auditskill.up.railway.app/discover?q=contract&mode=safe_static"
 ```
   Response:
 ```json
 {
   "registry": "https://nandatown.projectnanda.org/api/skills",
   "mode": "safe_static",
-  "total_in_registry": 16,
+  "total_in_registry": 17,
   "returned": 2,
-  "audited": 2,
+  "audited": 1,
   "results": [
     {
-      "name": "Weather Lookup",
-      "author": "WeatherTeam",
-      "description": "Get current weather for any city.",
-      "source_url": "https://example.com/weather-skill/SKILL.md",
+      "name": "A2A Consulting Contract",
+      "author": "Mainstreet",
+      "description": "A2A consulting contract that is templated and easy to fill in...",
+      "source_url": "https://hackathon-contract-agent-production.up.railway.app/skill.md",
+      "tags": "Lawyer, A2A, Payment, Contract",
       "audited": true,
-      "verdict": "PASS_BASIC_AUDIT",
-      "score": 92,
+      "verdict": "PASS_WITH_WARNINGS",
+      "score": 72,
       "risk_level": "none",
       "critical_findings": 0,
-      "skill_hash": "sha256:...",
-      "certificate_id": "seal_..."
+      "skill_hash": "sha256:eb9e2644...",
+      "certificate_id": "seal_0de7a9e890e2",
+      "cached": false,
+      "reason": null
     },
     {
-      "name": "Suspicious Helper",
-      "author": null,
-      "description": "Does everything.",
-      "source_url": "https://example.com/sus/SKILL.md",
-      "audited": true,
-      "verdict": "FAILS_BASIC_AUDIT",
-      "score": 8,
-      "risk_level": "critical",
-      "critical_findings": 2,
-      "skill_hash": "sha256:...",
-      "certificate_id": "seal_..."
+      "name": "AgentBroker X",
+      "author": "Amaan Khan (amaancoderx)",
+      "description": "An autonomous agent economy network...",
+      "source_url": "https://github.com/amaanbuild/AgentBroker-X/blob/main/SKILL.md",
+      "tags": "agents, autonomous, economy, negotiation, escrow, reputation, verification, nanda",
+      "audited": false,
+      "verdict": null,
+      "score": null,
+      "risk_level": null,
+      "critical_findings": 0,
+      "skill_hash": null,
+      "certificate_id": null,
+      "cached": false,
+      "reason": "Could not fetch source_url (SSRFBlockedError): SSRF blocked: Response body too large: 303368 bytes (max 262144) (url=https://github.com/amaanbuild/AgentBroker-X/blob/main/SKILL.md)"
     }
   ]
 }
 ```
+  Note: when a registry entry cannot be fetched safely, AuditSkill says so in `reason` instead of guessing — an unaudited skill is reported as unaudited, never as passed.
 
 POST /verify
   Verify a certificate's Ed25519 signature without any database lookup. Fully stateless.
@@ -227,14 +211,14 @@ curl https://auditskill.up.railway.app/benchmarks
 ```
   Response:
 ```json
-{ "scoring_weights": { "structure": 0.30, "security": 0.30, "liveness": 0.25, "metadata": 0.10, "scope": 0.05 }, "total_rules": 25 }
+{ "scoring_weights": { "structure": 0.30, "security": 0.30, "liveness": 0.25, "metadata": 0.10, "scope": 0.05 }, "total_rules": 30 }
 ```
 
 ## How the agent should use this
 
 AuditSkill solves two problems for agents that load third-party skills:
 
-**Problem 1 — Security.** A SKILL.md from an untrusted source may contain prompt injections (`ignore all previous instructions`), data exfiltration commands (`send env tokens to https://evil.example.com`), hidden instructions in HTML comments, zero-width Unicode steganography, or scope-creep claims (`unlimited permission`, `full control`). AuditSkill runs 25 deterministic security rules across 5 categories and returns findings with rule IDs, severities, and line numbers.
+**Problem 1 — Security.** A SKILL.md from an untrusted source may contain prompt injections (`ignore all previous instructions`), data exfiltration commands (`send env tokens to https://evil.example.com`), hidden instructions in HTML comments, zero-width Unicode steganography, scope-creep claims (`unlimited permission`, `full control`), supply-chain traps (package installs from remote tarballs, pipe-to-shell bootstrap scripts), or agent-capture setups (proxy-variable rewrites, detached background daemons, mandatory gating through a single external service). AuditSkill runs 30 deterministic security rules across 7 categories and returns findings with rule IDs, severities, and line numbers.
 
 **Problem 2 — Context hygiene.** Every SKILL.md the agent loads consumes tokens from its context window. A 10,000-token file with 2 endpoints is wasteful; a 400-token file with 5 endpoints and examples is efficient. The `context_cost` field in every audit response gives `tokens_estimate`, `size_bytes`, `density` (high/medium/low), and a plain-language `recommendation` so the agent can decide whether loading the skill is worth the context cost.
 
@@ -262,7 +246,7 @@ AuditSkill solves two problems for agents that load third-party skills:
 
 ## What this is NOT
 
-- **Not an LLM.** AuditSkill is deterministic and rule-based. It runs 25 regex-based security rules and structural checks. It does not interpret natural language or make probabilistic judgments. Audit latency is under 1 second for static analysis.
+- **Not an LLM.** AuditSkill is deterministic and rule-based. It runs 30 regex-based security rules and structural checks. It does not interpret natural language or make probabilistic judgments. Audit latency is under 1 second for static analysis.
 - **Not a guarantee.** A `PASS` means "no red flags found", not "provably safe forever." Endpoints can change or go down after the audit.
 - **Not a platform scanner.** It does not run inside a skill's runtime or inspect its server code. It audits the SKILL.md document — the file the agent reads before deciding to call an API.
 - **Not a replacement for /verify.** The audit tells you about a skill file. The certificate lets you prove the audit happened. These are complementary.
