@@ -398,7 +398,11 @@ async def _pinned_request(
 
             total = 0
             chunks: list[bytes] = []
-            async for chunk in streamed.aiter_bytes():
+            # Use aiter_raw() to get *decompressed* content — aiter_bytes()
+            # returns raw (possibly gzip-compressed) bytes, which would
+            # cause "incorrect header check" when the reconstructed
+            # Response tries to decode with the original content-encoding.
+            async for chunk in streamed.aiter_raw():
                 total += len(chunk)
                 if total > _MAX_RESPONSE_BYTES:
                     raise SSRFBlockedError(
@@ -411,9 +415,14 @@ async def _pinned_request(
 
             # Re-materialise a fully-read Response carrying the capped body so
             # callers can use .text/.json()/.is_redirect after the stream closes.
+            # Strip content-encoding since the body is already decompressed.
+            clean_headers = httpx.Headers(
+                [(k, v) for k, v in streamed.headers.raw
+                 if k.lower() not in (b"content-encoding", b"content-length")]
+            )
             response = httpx.Response(
                 status_code=streamed.status_code,
-                headers=streamed.headers,
+                headers=clean_headers,
                 content=body,
                 request=streamed.request,
                 extensions=streamed.extensions,
