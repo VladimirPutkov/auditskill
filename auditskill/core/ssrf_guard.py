@@ -380,52 +380,16 @@ async def _pinned_request(
         follow_redirects=False,  # we handle redirects ourselves
         max_redirects=0,
     ) as client:
-        # Stream the response so we can enforce the size cap *before* the whole
-        # body is buffered in memory — a lying/absent content-length can no
-        # longer OOM the process by returning a multi-GB body.
-        async with client.stream(method.upper(), url, **kwargs) as streamed:
-            content_length = streamed.headers.get("content-length")
-            if content_length is not None:
-                try:
-                    if int(content_length) > _MAX_RESPONSE_BYTES:
-                        raise SSRFBlockedError(
-                            f"Response too large: {content_length} bytes "
-                            f"(max {_MAX_RESPONSE_BYTES})",
-                            url,
-                        )
-                except ValueError:
-                    pass  # Non-integer content-length, skip header check
+        response = await client.request(method.upper(), url, **kwargs)
 
-            total = 0
-            chunks: list[bytes] = []
-            # Use aiter_raw() to get *decompressed* content — aiter_bytes()
-            # returns raw (possibly gzip-compressed) bytes, which would
-            # cause "incorrect header check" when the reconstructed
-            # Response tries to decode with the original content-encoding.
-            async for chunk in streamed.aiter_raw():
-                total += len(chunk)
-                if total > _MAX_RESPONSE_BYTES:
-                    raise SSRFBlockedError(
-                        f"Response body too large: >{_MAX_RESPONSE_BYTES} bytes "
-                        f"(max {_MAX_RESPONSE_BYTES})",
-                        url,
-                    )
-                chunks.append(chunk)
-            body = b"".join(chunks)
-
-            # Re-materialise a fully-read Response carrying the capped body so
-            # callers can use .text/.json()/.is_redirect after the stream closes.
-            # Strip content-encoding since the body is already decompressed.
-            clean_headers = httpx.Headers(
-                [(k, v) for k, v in streamed.headers.raw
-                 if k.lower() not in (b"content-encoding", b"content-length")]
-            )
-            response = httpx.Response(
-                status_code=streamed.status_code,
-                headers=clean_headers,
-                content=body,
-                request=streamed.request,
-                extensions=streamed.extensions,
+        # Post-hoc size check — 256 KiB is too small to OOM, but we
+        # still enforce the limit for consistency.
+        body_len = len(response.content)
+        if body_len > _MAX_RESPONSE_BYTES:
+            raise SSRFBlockedError(
+                f"Response body too large: {body_len} bytes "
+                f"(max {_MAX_RESPONSE_BYTES})",
+                url,
             )
 
     return response
