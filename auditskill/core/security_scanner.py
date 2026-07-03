@@ -303,6 +303,14 @@ def scan(
             else:
                 # Hidden-instruction rules (zero-width, bidi, homoglyph, HTML
                 # comments) are dangerous regardless of context — scan raw.
+                # However, descriptive-section suppression still applies to
+                # categories that routinely appear in documentation prose
+                # (e.g. payment_safety described under "How this works").
+                if (
+                    rule.category in _DESCRIPTIVE_SKIP_CATEGORIES
+                    and idx in descriptive_lines
+                ):
+                    continue
                 candidates = {line}
 
             if any(compiled.search(c) for c in candidates):
