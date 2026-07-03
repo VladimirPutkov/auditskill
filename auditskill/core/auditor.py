@@ -270,6 +270,18 @@ async def run_audit(
     ]
     verdict = determine_verdict(overall_score, verdict_findings)
 
+    # 10b. Non-skill / empty-document guard ---------------------------------
+    # A GitHub 404 HTML page, whitespace, or a bare heading is not a SKILL.md.
+    # Without this, such inputs score ~50 (REQUIRES_HUMAN_REVIEW) because the
+    # security module finds nothing to flag.  If the document carries none of
+    # the load-bearing signals (name, endpoints, base URL), fail it explicitly.
+    if not (parsed.name or parsed.endpoints or parsed.base_url):
+        finding = "Input does not look like a SKILL.md (no title, endpoints, or base URL found)"
+        if finding not in structure_report.findings:
+            structure_report.findings.insert(0, finding)
+        overall_score = min(overall_score, 30)
+        verdict = determine_verdict(overall_score, verdict_findings)
+
     # 11. Issues ------------------------------------------------------------
     issues = _collect_issues(
         structure_report,
@@ -363,7 +375,12 @@ def _estimate_context_cost(
 ) -> ContextCost:
     """Estimate how many tokens this SKILL.md will consume and whether it's worth reading."""
     size_bytes = len(raw_text.encode("utf-8"))
-    tokens = max(1, len(raw_text) // 4)  # rough char→token heuristic
+    # Token heuristic: ASCII runs ~4 chars/token, but CJK/Cyrillic/emoji are
+    # typically ~1 token per character (often more). A flat len//4 badly
+    # undercounts non-Latin scripts, so weight non-ASCII characters at ~1 token.
+    ascii_chars = sum(1 for ch in raw_text if ord(ch) < 128)
+    non_ascii_chars = len(raw_text) - ascii_chars
+    tokens = max(1, ascii_chars // 4 + non_ascii_chars)
 
     # "Useful content" signals: endpoints, examples, documented sections
     useful_signals = (
@@ -452,6 +469,13 @@ async def fetch_skill_from_url(url: str) -> str:
         raise ValueError(
             f"SKILL.md from {url} is too large: {len(response.content)} bytes "
             f"(limit {_MAX_SKILL_BYTES})"
+        )
+
+    # octet-stream is allowed (many hosts serve .md as binary), but reject
+    # actual binary payloads: a NUL byte means this is not a text SKILL.md.
+    if b"\x00" in response.content:
+        raise ValueError(
+            f"Content from {url} appears to be binary, not a text SKILL.md"
         )
 
     return response.text

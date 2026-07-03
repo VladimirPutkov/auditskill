@@ -16,6 +16,8 @@ a 0–100 risk score, and a categorical risk level.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from typing import TYPE_CHECKING
 
@@ -49,6 +51,80 @@ _SEVERITY_PENALTIES: dict[str, int] = {
 # Inline `code` span matcher (single-backtick spans on one line).
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
+# ---------------------------------------------------------------------------
+# Evasion-normalisation (zero-width stripping + homoglyph folding)
+# ---------------------------------------------------------------------------
+# Attackers hide injections by (a) splicing zero-width characters into words
+# ("ig<ZWSP>nore all previous instructions") or (b) swapping Latin letters for
+# visually identical Cyrillic/Greek ones ("ignоre" with a Cyrillic 'о').  The
+# raw-text detectors SEC-016/017/020 still flag the *presence* of these tricks,
+# but the injection itself would slip past the prose rules.  We therefore run
+# the prose rules against a normalised copy of each line as well.
+
+_ZERO_WIDTH_RE = re.compile(r"[​‌‍﻿⁠⁢⁣⁤]")
+
+# Common Cyrillic/Greek homoglyphs → their Latin lookalike.
+_CONFUSABLES: dict[str, str] = {
+    # Cyrillic lowercase
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c",
+    "х": "x", "у": "y", "і": "i", "ј": "j", "ѕ": "s",
+    "к": "k", "м": "m", "т": "t", "н": "h", "в": "b",
+    "г": "r", "п": "n",
+    # Cyrillic uppercase
+    "А": "A", "Е": "E", "О": "O", "Р": "P", "С": "C",
+    "Х": "X", "У": "Y", "К": "K", "М": "M", "Т": "T",
+    "Н": "H", "В": "B",
+    # Greek
+    "ο": "o", "α": "a", "ε": "e", "ρ": "p", "υ": "u",
+    "Ο": "O", "Α": "A", "Ε": "E",
+}
+_CONFUSABLE_TABLE = {ord(k): v for k, v in _CONFUSABLES.items()}
+
+
+def _normalize_for_matching(text: str) -> str:
+    """Strip zero-width chars and fold homoglyphs for evasion-resistant matching.
+
+    Used only for *matching* — findings still report the original line number
+    and the raw detectors continue to flag the obfuscation itself.
+    """
+    return _ZERO_WIDTH_RE.sub("", text).translate(_CONFUSABLE_TABLE)
+
+
+# ---------------------------------------------------------------------------
+# Base64-smuggled-instruction detection
+# ---------------------------------------------------------------------------
+# SEC-018 flags *long* Base64 blobs (>100 chars).  Short encoded injections
+# (e.g. a 44-char blob decoding to "ignore all previous instructions") slip
+# under that bar, so we additionally decode candidate tokens and re-scan the
+# plaintext.  This fires only when the decoded content is itself malicious —
+# so legitimate short Base64 (hashes, IDs) never false-fires.
+
+_BASE64_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{16,}={0,2}(?![A-Za-z0-9+/=])")
+_DECODED_INJECTION_RE = re.compile(
+    r"(ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts)"
+    r"|system\s+prompt"
+    r"|exfiltrate"
+    r"|send\s+[^\n]{0,30}(token|secret|credential|env)"
+    r"|forget\s+(everything|all))",
+    re.IGNORECASE,
+)
+
+
+def _decode_base64_injection(line: str) -> str | None:
+    """Return the decoded text if *line* hides an injection in Base64, else None."""
+    for match in _BASE64_TOKEN_RE.finditer(line):
+        token = match.group(0)
+        # Base64 length must be a multiple of 4 (with padding) to decode cleanly.
+        padded = token + "=" * ((4 - len(token) % 4) % 4)
+        try:
+            decoded_bytes = base64.b64decode(padded, validate=True)
+            decoded = decoded_bytes.decode("utf-8", errors="strict")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            continue
+        if _DECODED_INJECTION_RE.search(decoded):
+            return decoded.strip()
+    return None
+
 # Headings that mark *descriptive* prose — a section where a skill (often a
 # legitimate security tool) merely lists or discusses attack patterns rather
 # than instructing them.  Matches are keyed off heading text substrings.
@@ -78,7 +154,7 @@ _DESCRIPTIVE_SKIP_CATEGORIES: frozenset[str] = frozenset(
     {"unsafe_operations", "scope_creep", "agent_capture"}
 )
 
-_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.*)")
+_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)")
 
 
 def _strip_inline_code(line: str) -> str:
@@ -90,20 +166,54 @@ def _identify_descriptive_sections(lines: list[str]) -> set[int]:
     """Return 0-based indices of lines under a descriptive heading.
 
     A descriptive section runs from a heading whose text contains one of
-    :data:`_DESCRIPTIVE_HEADING_KEYWORDS` until the next heading of the same
-    or higher level (any subsequent ``#`` heading, conservatively).
+    :data:`_DESCRIPTIVE_HEADING_KEYWORDS` until the next heading of the **same
+    or higher level** (i.e. an equal or smaller ``#`` count).  Deeper
+    sub-headings (e.g. ``### Attack examples`` under ``## Limitations``) stay
+    part of the descriptive section instead of prematurely closing it.
     """
     descriptive: set[int] = set()
     active = False
+    active_level = 0
     for idx, line in enumerate(lines):
         m = _HEADING_RE.match(line)
         if m:
-            heading = m.group(1).strip().lower()
-            active = any(kw in heading for kw in _DESCRIPTIVE_HEADING_KEYWORDS)
+            level = len(m.group(1))
+            heading = m.group(2).strip().lower()
+            is_descriptive = any(kw in heading for kw in _DESCRIPTIVE_HEADING_KEYWORDS)
+            if is_descriptive:
+                # Open (or re-anchor) a descriptive section at this level.
+                active = True
+                active_level = level
+                continue
+            if active and level <= active_level:
+                # A sibling/parent heading closes the descriptive section.
+                active = False
+                active_level = 0
+            # A deeper sub-heading (level > active_level) leaves it open.
             continue
         if active:
             descriptive.add(idx)
     return descriptive
+
+def _url_rule_id(reason: str) -> str:
+    """Map a URL-suspicion reason to a clean, machine-readable rule ID.
+
+    Avoids stuffing slashes/quotes/dots (e.g. from a TLD like ``.tk``) into the
+    ``rule_id`` field, which would break machine-readable consumers.
+    """
+    r = reason.lower()
+    if "tld" in r:
+        return "URL_SUSPICIOUS_TLD"
+    if "bare ip" in r or "ip address" in r:
+        return "URL_BARE_IP"
+    if "tls" in r or "http://" in r or "non-https" in r or "no tls" in r:
+        return "URL_NO_TLS"
+    if "private" in r or "internal" in r or "metadata" in r:
+        return "URL_INTERNAL_TARGET"
+    if "could not be parsed" in r or "parse" in r:
+        return "URL_UNPARSEABLE"
+    return "URL_SUSPICIOUS"
+
 
 # Suspicion-reason → finding severity mapping (matched by keyword).
 def _url_severity(reason: str) -> str:
@@ -151,7 +261,7 @@ def scan(
 
     # --- 1. Rule-based pattern scan ----------------------------------------
     for rule in rules:
-        compiled = re.compile(rule.pattern, re.IGNORECASE)
+        compiled = rule.compiled  # process-cached compile (see security_rules)
         for idx, line in enumerate(lines):
             if rule.is_code_block_safe:
                 # Code-block-safe rules describe patterns that legitimately
@@ -168,13 +278,17 @@ def scan(
                     and idx in descriptive_lines
                 ):
                     continue
-                scan_line = _strip_inline_code(line)
+                stripped = _strip_inline_code(line)
+                # Match against both the raw line and an evasion-normalised
+                # copy (zero-width stripped, homoglyphs folded), so a spliced
+                # or homoglyph-disguised injection is still caught.
+                candidates = {stripped, _normalize_for_matching(stripped)}
             else:
                 # Hidden-instruction rules (zero-width, bidi, homoglyph, HTML
                 # comments) are dangerous regardless of context — scan raw.
-                scan_line = line
+                candidates = {line}
 
-            if compiled.search(scan_line):
+            if any(compiled.search(c) for c in candidates):
                 rules_triggered.add(rule.rule_id)
                 findings.append(
                     SecurityFinding(
@@ -186,16 +300,46 @@ def scan(
                     )
                 )
 
+    # --- 1b. Base64-smuggled instruction decoding --------------------------
+    # Short Base64 blobs slip under SEC-018's length bar; decode candidate
+    # tokens (outside code blocks) and flag any that decode to an injection.
+    for idx, line in enumerate(lines):
+        if idx in code_block_lines:
+            continue
+        decoded = _decode_base64_injection(line)
+        if decoded is not None:
+            rules_triggered.add("SEC-018B")
+            findings.append(
+                SecurityFinding(
+                    rule_id="SEC-018B",
+                    severity="high",
+                    category="hidden_instructions",
+                    detail=(
+                        "Base64-encoded string decodes to an injection-like "
+                        f"instruction ({decoded[:60]!r}) (matched on line {idx + 1})"
+                    ),
+                    line=idx + 1,
+                )
+            )
+
     # --- 2. URL suspicion analysis -----------------------------------------
+    # De-duplicate by (url, reason) so a URL repeated N times in the document
+    # produces one finding and one score penalty — not N (a score-gaming /
+    # DoS vector otherwise).
+    seen_url_findings: set[tuple[str, str]] = set()
     for idx, line in enumerate(lines):
         for url_match in _URL_RE.finditer(line):
             url = url_match.group(0)
             reasons = check_url_suspicion(url)
             for reason in reasons:
+                dedup_key = (url, reason)
+                if dedup_key in seen_url_findings:
+                    continue
+                seen_url_findings.add(dedup_key)
                 severity = _url_severity(reason)
                 findings.append(
                     SecurityFinding(
-                        rule_id=f"URL_{reason.upper().replace(' ', '_')}",
+                        rule_id=_url_rule_id(reason),
                         severity=severity,
                         category="suspicious_url",
                         detail=f"Suspicious URL ({reason}): {url} (line {idx + 1})",
@@ -213,15 +357,22 @@ def scan(
         ]
         mismatches = check_method_mismatch(description, ep_dicts)
         for mismatch in mismatches:
+            # check_method_mismatch returns plain strings; tolerate a dict too
+            # in case the contract ever changes.
+            if isinstance(mismatch, str):
+                detail = mismatch
+            elif isinstance(mismatch, dict):
+                detail = mismatch.get(
+                    "detail", "Endpoint method does not match description claims"
+                )
+            else:
+                detail = "Endpoint method does not match description claims"
             findings.append(
                 SecurityFinding(
                     rule_id="METHOD_MISMATCH",
                     severity="medium",
                     category="method_mismatch",
-                    detail=mismatch.get(
-                        "detail",
-                        "Endpoint method does not match description claims",
-                    ),
+                    detail=detail,
                     line=0,
                 )
             )

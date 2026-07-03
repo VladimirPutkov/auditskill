@@ -63,6 +63,27 @@ _CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 # Markdown ## headers
 _SECTION_HEADER_RE = re.compile(r"^##\s+(.+)", re.MULTILINE)
 
+# HTML tag stripper + control-char stripper for sanitising extracted text.
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_text(value: str | None, *, max_len: int = 300) -> str | None:
+    """Strip HTML tags and control chars from extracted skill text.
+
+    The name/description are echoed back in JSON responses (and may be rendered
+    by downstream consumers), so a title like ``Evil<script>alert(1)</script>``
+    must not carry an executable payload through the audit.
+    """
+    if value is None:
+        return None
+    cleaned = _HTML_TAG_RE.sub("", value)
+    cleaned = _CONTROL_CHAR_RE.sub("", cleaned)
+    cleaned = cleaned.strip()
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip() + "…"
+    return cleaned or None
+
 # Auth type patterns (for auth_type field)
 _AUTH_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bearer", re.compile(r"bearer\s+token|authorization:\s*bearer", re.IGNORECASE)),
@@ -105,6 +126,8 @@ _SIDE_EFFECT_KEYWORDS = {
 def parse_skill_md(raw_text: str) -> ParsedSkill:
     """Parse a raw SKILL.md string and return structured metadata."""
     name, description = _extract_name_description(raw_text)
+    name = _sanitize_text(name, max_len=200)
+    description = _sanitize_text(description, max_len=500)
     base_url = _find_base_url(raw_text)
     endpoints = _extract_endpoints(raw_text)
     example_count = _count_examples(raw_text)

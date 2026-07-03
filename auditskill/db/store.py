@@ -339,7 +339,13 @@ class AuditStore:
 
         # Check freshness against UTC now.
         try:
-            created = datetime.fromisoformat(record["created_at"])
+            # Normalise a trailing 'Z' → '+00:00'; datetime.fromisoformat did
+            # not accept the 'Z' military-zone suffix before Python 3.11, which
+            # would make every cached row unparseable (and the cache useless).
+            created_raw = str(record["created_at"])
+            if created_raw.endswith("Z"):
+                created_raw = created_raw[:-1] + "+00:00"
+            created = datetime.fromisoformat(created_raw)
             # Ensure timezone-aware comparison.
             if created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)

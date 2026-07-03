@@ -58,9 +58,9 @@ async def _probe_single(
 ) -> EndpointResult:
     """Issue one safe HTTP request and return an :class:`EndpointResult`."""
     start = time.monotonic()
-    tls = url.lower().startswith("https")
+    tls = url.lower().startswith("https://")
     try:
-        response = await safe_request(method, url, timeout=timeout)
+        response = await safe_request(method, url, timeout_override=timeout)
         latency_ms = round((time.monotonic() - start) * 1000, 1)
 
         content_type = response.headers.get("content-type", "")
@@ -194,7 +194,11 @@ async def test_endpoints(
     findings: list[str] = []
     for r in results:
         if _is_dead(r):
-            penalty = max(15.0, 100.0 / total_tested * 1.5)
+            # Each dead endpoint costs its proportional share of the score,
+            # floored at 15 so a single failure still stings.  Capped at
+            # 100/total so N dead endpoints can zero the score but never
+            # overflow it (previously max(15, 150) tanked any 1-endpoint skill).
+            penalty = max(15.0, 100.0 / total_tested)
             score -= penalty
             reason = r.error or f"HTTP {r.status}"
             findings.append(f"Endpoint {r.method} {r.url} not reachable ({reason})")

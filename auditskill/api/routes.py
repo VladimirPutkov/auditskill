@@ -33,6 +33,7 @@ from auditskill.api.models import (
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
 from auditskill.core.certifier import verify_certificate
 from auditskill.core.discover import discover
+from auditskill.core.ssrf_guard import SSRFBlockedError
 from auditskill.rules.quality_benchmarks import SCORING_WEIGHTS
 from auditskill.rules.security_rules import get_all_rules
 
@@ -79,6 +80,13 @@ async def audit_skill(request: Request, body: AuditRequest) -> AuditResponse:
 
     except HTTPException:
         raise
+    except SSRFBlockedError as exc:
+        # A blocked target URL is a bad *request*, not a server fault.
+        logger.warning("Audit blocked by SSRF guard: %s", exc)
+        raise HTTPException(
+            status_code=422,
+            detail=f"skill_url was blocked by the SSRF guard: {exc.reason}",
+        ) from exc
     except ValueError as exc:
         logger.warning("Audit validation error: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc

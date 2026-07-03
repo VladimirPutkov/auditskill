@@ -19,7 +19,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Literal
+
+
+@lru_cache(maxsize=512)
+def _compile(pattern: str) -> re.Pattern[str]:
+    """Compile *pattern* once (case-insensitive) and cache the result.
+
+    Rules are static, so every distinct pattern is compiled a single time
+    for the whole process instead of on every ``scan()`` call.
+    """
+    return re.compile(pattern, re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Rule dataclass
@@ -53,8 +64,8 @@ class SecurityRule:
 
     @property
     def compiled(self) -> re.Pattern[str]:
-        """Return a compiled regex with ``IGNORECASE``."""
-        return re.compile(self.pattern, re.IGNORECASE)
+        """Return a compiled regex with ``IGNORECASE`` (process-cached)."""
+        return _compile(self.pattern)
 
 
 # ---------------------------------------------------------------------------
@@ -66,20 +77,30 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
         rule_id="SEC-001",
         category="prompt_injection",
         severity="critical",
-        pattern=r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|directives)",
+        pattern=(
+            r"(?<!not\s)(?<!n't\s)(?<!never\s)(?<!don't\s)"
+            r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|directives)"
+        ),
         description=(
             "Detects attempts to override prior instructions — a classic "
-            "prompt-injection vector."
+            "prompt-injection vector.  Negated forms ('do not ignore "
+            "previous instructions') are excluded."
         ),
     ),
     SecurityRule(
         rule_id="SEC-002",
         category="prompt_injection",
         severity="critical",
-        pattern=r"(you\s+are\s+now|from\s+now\s+on\s+you\s+are|pretend\s+you\s+are)",
+        pattern=(
+            r"(you\s+are\s+now\s+(?:a\b|an\b|the\b|my\b|in\s|running|operating|"
+            r"acting|jailbroken|dan\b|free\b|unrestricted|going\s+to|no\s+longer)"
+            r"|from\s+now\s+on\s+you\s+are"
+            r"|pretend\s+(?:you\s+are|to\s+be))"
+        ),
         description=(
             "Detects persona-reassignment attacks that try to redefine "
-            "the agent's identity."
+            "the agent's identity.  Benign phrasing like 'you are now "
+            "ready' is excluded by requiring a role/identity token."
         ),
         is_code_block_safe=True,
     ),
@@ -102,10 +123,14 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
         rule_id="SEC-004",
         category="prompt_injection",
         severity="critical",
-        pattern=r"(forget\s+everything|forget\s+all|clear\s+.*context)",
+        pattern=(
+            r"((?<!not\s)(?<!n't\s)(?<!never\s)forget\s+(everything|all)"
+            r"|clear\s+.*context)"
+        ),
         description=(
             "Detects context-reset attacks that instruct the agent to "
-            "discard its conversation or safety context."
+            "discard its conversation or safety context.  Negated forms "
+            "('do not forget everything') are excluded."
         ),
     ),
     SecurityRule(
@@ -161,12 +186,13 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
         category="data_exfiltration",
         severity="critical",
         pattern=(
-            r"POST\s+.{0,60}"
-            r"(api_key|token|password|secret|env|credentials)"
+            r"POST\b[^\n]{0,80}"
+            r"[\"'{\s](api_key|token|password|secret|env|credentials)[\"']?\s*[:=]"
         ),
         description=(
-            "Detects HTTP POST operations that include sensitive values "
-            "such as API keys, passwords, or secrets."
+            "Detects HTTP POST bodies that carry sensitive values as "
+            "key/value pairs (api_key=, \"token\":, password=…).  An "
+            "endpoint path like 'POST /auth/token' no longer false-fires."
         ),
         is_code_block_safe=True,
     ),
@@ -234,10 +260,11 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
         rule_id="SEC-014",
         category="unsafe_operations",
         severity="high",
-        pattern=r"(eval\s*\(|exec\s*\(|os\.system\s*\(|subprocess\.call\s*\(|__import__\s*\()",
+        pattern=r"(\beval\s*\(|\bexec\s*\(|os\.system\s*\(|subprocess\.call\s*\(|__import__\s*\()",
         description=(
             "Detects dynamic code-execution calls in Python (eval, exec, "
-            "os.system, subprocess.call, __import__)."
+            "os.system, subprocess.call, __import__).  Word-boundary "
+            "anchoring avoids matching 'retrieval(' / 'medieval('."
         ),
     ),
     SecurityRule(
@@ -366,10 +393,16 @@ _SCOPE_CREEP_RULES: list[SecurityRule] = [
         rule_id="SEC-024",
         category="scope_creep",
         severity="medium",
-        pattern=r"(any\s+.*action|everything|all\s+operations|do\s+anything)",
+        pattern=(
+            r"(perform\s+any\s+[^\n]{0,20}action|do\s+any\s+[^\n]{0,20}action"
+            r"|\bdo\s+anything\b|all\s+operations"
+            r"|access\s+everything|do\s+everything"
+            r"|everything\s+(?:on|in)\s+(?:your|the)\s+system)"
+        ),
         description=(
-            "Detects overly permissive scope declarations — 'any action', "
-            "'everything', 'all operations', 'do anything'."
+            "Detects overly permissive scope declarations — 'perform any "
+            "action', 'do anything', 'all operations', 'access "
+            "everything'.  Bare 'everything' no longer false-fires."
         ),
     ),
     SecurityRule(
@@ -464,13 +497,15 @@ _AGENT_CAPTURE_RULES: list[SecurityRule] = [
             r"(before\s+(every|each)\s+[^\n]{0,40}\bcall\b"
             r"|must\s+call\s+[^\n]{0,30}\bfirst\b"
             r"|never\s+[\"'“‘]?(try|use)\b[^\n]{0,30}\b(anyway|without)\b"
-            r"|fail[\s-]closed)"
+            r"|(stop|halt|safely|unreachable|unavailable)\b[^\n]{0,40}fail[\s-]?closed"
+            r"|fail[\s-]?closed\b[^\n]{0,40}\bunless\b)"
         ),
         description=(
             "Detects mandatory-gating language that makes the agent "
             "dependent on a single external service before every action "
-            "('must call X first', 'never try the tool anyway', 'fail "
-            "closed') — a single point of failure and control."
+            "('must call X first', 'never try the tool anyway', 'stop … "
+            "fail closed').  A bare 'our system fails closed' virtue "
+            "statement no longer false-fires."
         ),
         is_code_block_safe=True,
     ),

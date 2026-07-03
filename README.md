@@ -163,14 +163,14 @@ export AUDITSKILL_KEY_ID=...
 uvicorn auditskill.api.main:app --reload --port 8000
 ```
 
-## Tests — 70 Passing
+## Tests
 
 ```bash
 pip install -e ".[dev]"
 pytest -q
 ```
 
-The test suite covers: SSRF blocking (including decimal-encoded loopback and cloud-metadata targets), score renormalization, verdict boundaries, Ed25519 signature round-trip with tamper detection, the false-positive guard on a legitimate security skill, negative samples for every FP-prone rule (negated "does not override" phrasing, plain `pip install` from an index), plain-Markdown parsing, and end-to-end verdicts on good/evil/benign/broken/supply-chain fixtures.
+The test suite covers: SSRF blocking (including decimal-encoded loopback and cloud-metadata targets), score renormalization, verdict boundaries, Ed25519 signature round-trip with tamper detection, the false-positive guard on a legitimate security skill, negative samples for every FP-prone rule (negated "does not override" phrasing, plain `pip install` from an index), evasion resistance (zero-width-spliced and homoglyph-disguised injections, short Base64-smuggled payloads), URL-finding de-duplication, method-mismatch crash regression, skill-name sanitisation, non-skill/empty-document rejection, plain-Markdown parsing, and end-to-end verdicts on good/evil/benign/broken/supply-chain fixtures.
 
 ---
 

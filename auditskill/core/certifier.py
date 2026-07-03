@@ -21,11 +21,6 @@ from typing import Any
 
 from auditskill.api.models import Certificate
 from auditskill.core.crypto import sign_document, verify_signature
-from auditskill.rules.quality_benchmarks import (
-    SCORING_WEIGHTS,
-    calculate_overall_score,
-    determine_verdict,
-)
 
 logger = logging.getLogger(__name__)
 

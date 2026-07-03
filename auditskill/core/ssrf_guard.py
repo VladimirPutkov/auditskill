@@ -24,6 +24,7 @@ The defence is layered:
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import re
@@ -127,7 +128,9 @@ async def check_url(url: str) -> SSRFCheckResult:
         _validate_scheme(parsed.scheme, url)
         hostname = _extract_hostname(parsed, url)
         _check_blocked_hostname(hostname, url)
-        resolved_ip = _resolve_and_check(hostname, url)
+        # DNS resolution is blocking; run it in a worker thread so it does not
+        # stall the event loop (matters under concurrent /discover fan-out).
+        resolved_ip = await asyncio.to_thread(_resolve_and_check, hostname, url)
         return SSRFCheckResult(safe=True, resolved_ip=resolved_ip)
     except SSRFBlockedError as exc:
         logger.warning("SSRF check failed for %r: %s", url, exc.reason)
@@ -184,12 +187,15 @@ async def safe_request(
 
         # Check for redirect
         if response.is_redirect and "location" in response.headers:
-            current_url = str(response.headers["location"])
-            # Resolve relative redirects
-            if not current_url.startswith(("http://", "https://")):
+            location = str(response.headers["location"])
+            # Resolve relative redirects against the URL we just fetched
+            # (this hop), NOT the original request URL — otherwise A→B→C with
+            # a relative Location on B resolves against A and mis-targets.
+            if not location.startswith(("http://", "https://")):
                 from urllib.parse import urljoin
 
-                current_url = urljoin(url, current_url)
+                location = urljoin(current_url, location)
+            current_url = location
             logger.debug("SSRF guard following redirect hop %d → %s", hop + 1, current_url)
             continue
 
@@ -374,31 +380,43 @@ async def _pinned_request(
         follow_redirects=False,  # we handle redirects ourselves
         max_redirects=0,
     ) as client:
-        response = await client.request(
-            method=method.upper(),
-            url=url,
-            **kwargs,
-        )
+        # Stream the response so we can enforce the size cap *before* the whole
+        # body is buffered in memory — a lying/absent content-length can no
+        # longer OOM the process by returning a multi-GB body.
+        async with client.stream(method.upper(), url, **kwargs) as streamed:
+            content_length = streamed.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > _MAX_RESPONSE_BYTES:
+                        raise SSRFBlockedError(
+                            f"Response too large: {content_length} bytes "
+                            f"(max {_MAX_RESPONSE_BYTES})",
+                            url,
+                        )
+                except ValueError:
+                    pass  # Non-integer content-length, skip header check
 
-    # Enforce max response size
-    content_length = response.headers.get("content-length")
-    if content_length is not None:
-        try:
-            if int(content_length) > _MAX_RESPONSE_BYTES:
-                raise SSRFBlockedError(
-                    f"Response too large: {content_length} bytes "
-                    f"(max {_MAX_RESPONSE_BYTES})",
-                    url,
-                )
-        except ValueError:
-            pass  # Non-integer content-length, skip check
+            total = 0
+            chunks: list[bytes] = []
+            async for chunk in streamed.aiter_bytes():
+                total += len(chunk)
+                if total > _MAX_RESPONSE_BYTES:
+                    raise SSRFBlockedError(
+                        f"Response body too large: >{_MAX_RESPONSE_BYTES} bytes "
+                        f"(max {_MAX_RESPONSE_BYTES})",
+                        url,
+                    )
+                chunks.append(chunk)
+            body = b"".join(chunks)
 
-    # Also check actual body length (content-length can lie or be absent)
-    if len(response.content) > _MAX_RESPONSE_BYTES:
-        raise SSRFBlockedError(
-            f"Response body too large: {len(response.content)} bytes "
-            f"(max {_MAX_RESPONSE_BYTES})",
-            url,
-        )
+            # Re-materialise a fully-read Response carrying the capped body so
+            # callers can use .text/.json()/.is_redirect after the stream closes.
+            response = httpx.Response(
+                status_code=streamed.status_code,
+                headers=streamed.headers,
+                content=body,
+                request=streamed.request,
+                extensions=streamed.extensions,
+            )
 
     return response
