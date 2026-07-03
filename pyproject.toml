@@ -1,0 +1,49 @@
+[project]
+name = "auditskill"
+version = "1.0.0"
+description = "Third-party attestation layer for NANDA agent skills. Audits SKILL.md files for structure, security, liveness, and issues signed Ed25519 certificates."
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    {name = "AuditSkill Team"}
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.0",
+    "pynacl>=1.5",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "aiosqlite>=0.20",
+    "slowapi>=0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.5",
+    "pyright>=1.1",
+]
+
+[project.scripts]
+auditskill = "auditskill.api.main:run"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["auditskill*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
