@@ -33,6 +33,11 @@ _MAX_ENTRIES = 30
 _MAX_CONCURRENCY = 4
 _PER_AUDIT_TIMEOUT = 20.0
 
+# Deterministic ranking: composite = overall_score + density bonus.  The
+# formula is published verbatim in /benchmarks — no hidden magic.
+DENSITY_BONUS: dict[str, int] = {"high": 5, "medium": 0, "low": -5}
+_FAILS = "FAILS_BASIC_AUDIT"
+
 
 def _matches_query(entry: dict[str, Any], q: str) -> bool:
     """Case-insensitive substring match over name/description/tags/author."""
@@ -105,7 +110,66 @@ async def _audit_entry(
     base.skill_hash = result.skill_hash
     base.certificate_id = result.certificate_id
     base.cached = result.cached
+
+    # Compact context-cost summary so the agent can weigh safety AND price
+    # in one /discover call (core mission: pick the right skill to load).
+    cc = result.context_cost
+    cheapest = min((c.input_cost_usd for c in cc.per_model), default=None)
+    base.context_cost = {
+        "tokens_estimate": cc.tokens_estimate,
+        "density": cc.density,
+        "cheapest_input_usd": cheapest,
+    }
     return base
+
+
+# ---------------------------------------------------------------------------
+# Ranking (pure, deterministic — unit-testable without network)
+# ---------------------------------------------------------------------------
+
+
+def _composite(r: DiscoverResult) -> int:
+    density = (r.context_cost or {}).get("density")
+    return (r.score or 0) + DENSITY_BONUS.get(density, 0)
+
+
+def rank_results(results: list[DiscoverResult]) -> list[DiscoverResult]:
+    """Order results best-first and attach ``rank`` / ``rank_reason``.
+
+    Buckets (never mixed): passing audits → failing audits → unaudited.
+    Within the passing bucket: composite desc, then score desc, then fewer
+    critical findings, then name — fully deterministic.
+    """
+    passing = [r for r in results if r.audited and r.verdict != _FAILS]
+    failing = [r for r in results if r.audited and r.verdict == _FAILS]
+    unaudited = [r for r in results if not r.audited]
+
+    passing.sort(
+        key=lambda r: (
+            -_composite(r),
+            -(r.score or 0),
+            r.critical_findings,
+            (r.name or "").lower(),
+        )
+    )
+    failing.sort(key=lambda r: (-(r.score or 0), (r.name or "").lower()))
+
+    for r in passing:
+        density = (r.context_cost or {}).get("density")
+        bonus = DENSITY_BONUS.get(density, 0)
+        r.rank_reason = (
+            f"composite {_composite(r)} = score {r.score} "
+            f"+ density bonus {bonus:+d} ({density or 'unknown'})"
+        )
+    for r in failing:
+        r.rank_reason = "excluded from top ranking: FAILS_BASIC_AUDIT"
+    for r in unaudited:
+        r.rank_reason = f"not ranked: {r.reason or 'could not be audited'}"
+
+    ordered = passing + failing + unaudited
+    for position, r in enumerate(ordered, start=1):
+        r.rank = position
+    return ordered
 
 
 async def discover(
@@ -170,11 +234,14 @@ async def discover(
     results = await asyncio.gather(*(_bounded(s) for s in selected))
     audited_count = sum(1 for r in results if r.audited)
 
+    # Best-first: the agent's decision engine, not a bare listing.
+    ranked = rank_results(list(results))
+
     return DiscoverResponse(
         registry=registry_url,
         mode=mode,
         total_in_registry=total,
-        returned=len(results),
+        returned=len(ranked),
         audited=audited_count,
-        results=list(results),
+        results=ranked,
     )

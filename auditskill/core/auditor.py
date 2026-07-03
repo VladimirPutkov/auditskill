@@ -33,6 +33,7 @@ from auditskill.core import (
     certifier,
     metadata_checker,
     parser,
+    pricing,
     security_scanner,
     scope_analyzer,
     endpoint_tester,
@@ -223,6 +224,7 @@ async def run_audit(
         skill_md,
         endpoints=parsed.endpoints,
         description=parsed.description,
+        base_url=parsed.base_url,
     )
 
     # 5. Scope analysis -----------------------------------------------------
@@ -421,11 +423,30 @@ def _estimate_context_cost(
     if not parts:
         parts.append("Moderate size and density. Reasonable context-window cost.")
 
+    # Per-model tokens + input cost (USD) + window share.  Reads the in-memory
+    # price snapshot only — never touches the network (safe_static invariant).
+    try:
+        per_model, price_source = pricing.estimate_for_models(
+            ascii_chars, non_ascii_chars
+        )
+    except Exception:  # noqa: BLE001 — pricing must never break an audit
+        logger.exception("Per-model cost estimation failed; returning base estimate")
+        per_model, price_source = [], None
+
+    if per_model:
+        max_cost = max(c.input_cost_usd for c in per_model)
+        parts.append(
+            f"Loading costs at most ${max_cost:.4f} (input) on tracked models."
+        )
+
     return ContextCost(
         tokens_estimate=tokens,
         size_bytes=size_bytes,
         density=density,
         recommendation=" ".join(parts),
+        per_model=per_model,
+        error_margin_pct=pricing.ERROR_MARGIN_PCT,
+        price_source=price_source,
     )
 
 

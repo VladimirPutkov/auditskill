@@ -30,9 +30,10 @@ from auditskill.api.models import (
     VerifyRequest,
     VerifyResponse,
 )
+from auditskill.core import pricing
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
 from auditskill.core.certifier import verify_certificate
-from auditskill.core.discover import discover
+from auditskill.core.discover import DENSITY_BONUS, discover
 from auditskill.core.ssrf_guard import SSRFBlockedError
 from auditskill.rules.quality_benchmarks import SCORING_WEIGHTS
 from auditskill.rules.security_rules import get_all_rules
@@ -63,6 +64,18 @@ async def audit_skill(request: Request, body: AuditRequest) -> AuditResponse:
     store = request.app.state.store
 
     try:
+        # Validate the optional model narrowing up front (cheap, self-healing).
+        if body.model is not None and body.model not in pricing.known_models():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unknown model '{body.model}'. Tracked models: "
+                    f"{', '.join(pricing.known_models())}. "
+                    "Fix: omit 'model' to get every tracked model, or pick one "
+                    "from the list."
+                ),
+            )
+
         # Resolve the SKILL.md content ----------------------------------
         skill_md = body.skill_md
         if body.skill_url and not skill_md:
@@ -76,6 +89,13 @@ async def audit_skill(request: Request, body: AuditRequest) -> AuditResponse:
 
         # Execute the audit pipeline -----------------------------------
         result = await run_audit(skill_md, body.mode, store)
+
+        # Narrow per-model costs AFTER the (cached) audit so the cache key
+        # stays model-independent and every cache hit serves every model.
+        if body.model is not None and result.context_cost.per_model:
+            result.context_cost.per_model = [
+                c for c in result.context_cost.per_model if c.model == body.model
+            ]
         return result
 
     except HTTPException:
@@ -336,6 +356,16 @@ async def benchmarks() -> dict[str, Any]:
         "verdict_thresholds": verdict_thresholds,
         "security_categories": categories,
         "total_rules": len(all_rules),
+        "discover_ranking": {
+            "composite": "overall_score + density_bonus",
+            "density_bonus": DENSITY_BONUS,
+            "tie_break": ["overall_score desc", "critical_findings asc", "name asc"],
+            "excluded": (
+                "FAILS_BASIC_AUDIT entries are never ranked above passing "
+                "entries; unaudited entries always rank last (with a reason)"
+            ),
+        },
+        "context_cost_models": pricing.known_models(),
         "limits": {
             "max_skill_input_bytes": MAX_SKILL_INPUT_BYTES,
             "max_endpoints": MAX_ENDPOINTS,

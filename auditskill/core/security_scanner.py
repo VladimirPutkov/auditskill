@@ -20,6 +20,7 @@ import base64
 import binascii
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from auditskill.api.models import SecurityFinding, SecurityReport
 from auditskill.rules.security_rules import get_all_rules
@@ -37,6 +38,15 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 _URL_RE = re.compile(
     r"https?://[^\s\)\]\}\>\"\'\`\,]+",
+    re.IGNORECASE,
+)
+
+# "METHOD https://host/path" — an *executable* endpoint declaration with an
+# absolute URL.  Used for the domain-consistency check: declared endpoints
+# must live on the declared Base URL host.  Prose links (Author, repo, docs)
+# never match because they carry no HTTP-method prefix.
+_ENDPOINT_ABS_URL_RE = re.compile(
+    r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(https?://[^\s\"'`>\)\]]+)",
     re.IGNORECASE,
 )
 
@@ -237,6 +247,7 @@ def scan(
     raw_text: str,
     endpoints: list[dict[str, str]] | None = None,
     description: str | None = None,
+    base_url: str | None = None,
 ) -> SecurityReport:
     """Scan *raw_text* for security issues and return a :class:`SecurityReport`.
 
@@ -247,6 +258,9 @@ def scan(
             and ``path`` keys.
         description: Optional human-readable description of the skill,
             used together with *endpoints* for mismatch detection.
+        base_url: Optional declared Base URL.  When given, endpoint
+            declarations of the form ``METHOD https://…`` pointing at a
+            *different* host are flagged (domain-consistency check).
 
     Returns:
         A fully populated :class:`SecurityReport`.
@@ -346,6 +360,39 @@ def scan(
                         line=idx + 1,
                     )
                 )
+
+    # --- 2b. Domain consistency (declared endpoints vs Base URL host) ------
+    # Only endpoint declarations with an absolute URL are compared; prose
+    # links (Author, repository, docs) are metadata, not attack surface.
+    if base_url:
+        try:
+            base_host = (urlparse(base_url).hostname or "").lower()
+        except Exception:  # noqa: BLE001
+            base_host = ""
+        if base_host:
+            seen_foreign: set[str] = set()
+            for idx, line in enumerate(lines):
+                for m in _ENDPOINT_ABS_URL_RE.finditer(line):
+                    url = m.group(1)
+                    try:
+                        host = (urlparse(url).hostname or "").lower()
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if host and host != base_host and url not in seen_foreign:
+                        seen_foreign.add(url)
+                        findings.append(
+                            SecurityFinding(
+                                rule_id="ENDPOINT_FOREIGN_HOST",
+                                severity="medium",
+                                category="suspicious_url",
+                                detail=(
+                                    "Declared endpoint targets a different host "
+                                    f"than the declared Base URL ({base_host}): "
+                                    f"{url} (line {idx + 1})"
+                                ),
+                                line=idx + 1,
+                            )
+                        )
 
     # --- 3. Method-mismatch detection --------------------------------------
     if endpoints is not None and description is not None:

@@ -42,6 +42,13 @@ class AuditRequest(BaseModel):
         default="liveness",
         description="Audit mode: 'safe_static' skips live endpoint probing.",
     )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Optional model ID — narrows context_cost.per_model to this model "
+            "only. Omit to get every tracked model (see /benchmarks)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_source(self) -> AuditRequest:
@@ -307,6 +314,21 @@ class Certificate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PerModelCost(BaseModel):
+    """Token count, input cost, and window share for one tracked model."""
+
+    model: str = Field(..., description="Model ID (see /benchmarks for the tracked list).")
+    tokens: int = Field(..., description="Calibrated token estimate for this model family.")
+    input_cost_usd: float = Field(
+        ...,
+        description="Estimated one-time input cost (USD) to load this file.",
+    )
+    window_pct: float = Field(
+        ...,
+        description="Share of the model's context window this file consumes, in percent.",
+    )
+
+
 class ContextCost(BaseModel):
     """Token-budget impact estimate for loading this SKILL.md."""
 
@@ -325,6 +347,22 @@ class ContextCost(BaseModel):
     recommendation: str = Field(
         ...,
         description="Actionable advice for the agent about context cost.",
+    )
+    # All fields below default so pre-existing cached audits still deserialize.
+    per_model: list[PerModelCost] = Field(
+        default_factory=list,
+        description="Per-model token count, input cost (USD), and context-window share.",
+    )
+    error_margin_pct: int = Field(
+        default=10,
+        description="Honest error bar of the token heuristic, in percent.",
+    )
+    price_source: str | None = Field(
+        default=None,
+        description=(
+            "Where prices came from: the live API Pricing Look-Up skill "
+            "(NANDA Town) or the built-in fallback table, with as_of date."
+        ),
     )
 
 
@@ -412,6 +450,19 @@ class DiscoverResult(BaseModel):
     reason: str | None = Field(
         default=None,
         description="Why the entry could not be audited (fetch error, no content, etc.).",
+    )
+    # Ranking fields (all default — pre-ranking cached rows still deserialize).
+    rank: int | None = Field(
+        default=None,
+        description="1-based rank: passing audits first, then failing, then unaudited.",
+    )
+    rank_reason: str | None = Field(
+        default=None,
+        description="Deterministic explanation of the rank (formula in /benchmarks).",
+    )
+    context_cost: dict[str, Any] | None = Field(
+        default=None,
+        description="Compact cost summary: tokens_estimate, density, cheapest_input_usd.",
     )
 
 

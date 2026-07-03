@@ -1,10 +1,10 @@
 # AuditSkill
 
-**A zero-auth HTTP API that audits SKILL.md files before an agent loads them.**
+**A zero-auth HTTP API that helps an agent find, verify, and safely load the right skill — before any of it enters the context window.**
 
-NANDA solves discovery. AuditSkill solves the next question: **"Should I trust this skill?"**
+NANDA solves discovery. AuditSkill solves the next question: **"Which of these skills should I actually use — is it safe, and is it worth the cost?"**
 
-One POST. A deterministic verdict. A signed certificate any agent can verify offline.
+Find → Verify → Load. One POST. A deterministic verdict, a per-model cost estimate, a ranked registry, and a signed certificate any agent can verify offline.
 
 ---
 
@@ -45,7 +45,7 @@ AuditSkill is a deterministic, rule-based pipeline. **No LLM.** The agent sends 
 flowchart LR
     A["Agent discovers<br/>a SKILL.md"] --> B["POST /audit"]
     B --> C["Parse"]
-    C --> D["Security scan<br/>30 rules"]
+    C --> D["Security scan<br/>34 rules"]
     C --> E["Structure<br/>scoring"]
     C --> F["Scope<br/>analysis"]
     C --> G["Metadata<br/>check"]
@@ -55,36 +55,51 @@ flowchart LR
     J --> K["Return verdict +<br/>signed certificate"]
 ```
 
-### Security audit — 30 rules, 7 categories
+### Security audit — 34 rules, 8 categories
 
 | Category | Rules | Severity | What it catches |
 |---|---|---|---|
 | Prompt injection | SEC-001 – SEC-005 | Critical | "Ignore previous instructions", persona hijack, context reset, safety bypass |
-| Data exfiltration | SEC-006 – SEC-010 | Critical | POST secrets to external URLs, curl with tokens, phone-home patterns |
+| Data exfiltration | SEC-006 – SEC-010, SEC-034 | Critical / High | POST secrets to external URLs, curl with tokens, phone-home patterns, hardcoded live provider secrets in the file |
 | Unsafe operations | SEC-011 – SEC-015 | High | `rm -rf`, `DROP TABLE`, `eval()`, `sudo`, disk-format commands |
 | Hidden instructions | SEC-016 – SEC-020 | High | Zero-width chars, bidi overrides, Base64 blobs, HTML comments with imperatives, IDN homoglyphs |
 | Scope creep | SEC-021 – SEC-025 | Medium | "Unlimited permission", "full control", auth bypass, unbounded scope claims |
 | Supply chain | SEC-026 – SEC-027 | Critical | Package installs from remote URLs/tarballs, pipe-to-shell bootstrap scripts |
 | Agent capture | SEC-028 – SEC-030 | High/Medium | Proxy-variable rewrites that reroute all agent traffic, detached background daemons, mandatory gating through a single external service |
+| Payment safety | SEC-031 – SEC-033 | Critical / High / Medium | Credential hand-off (send the agent's own LLM-provider API key to the skill), auto-funding with no spending cap, unbounded payment-retry loops |
 
-The supply-chain and agent-capture categories came from auditing skills deployed in the wild: one "safety layer" skill instructs agents to install a tarball from its own server, reroute all traffic through its proxy, keep a background daemon alive, and halt all work whenever its endpoint is unreachable. Each of those instructions is now a distinct, line-numbered finding.
+The supply-chain, agent-capture, and payment-safety categories came from auditing skills deployed in the live NANDA Town registry. One "safety layer" skill instructs agents to install a tarball from its own server, reroute all traffic through its proxy, keep a background daemon alive, and halt all work whenever its endpoint is unreachable. A separate registry skill asks the agent to POST its own OpenAI/Anthropic key to a `set-api-key` endpoint. Each of those instructions is now a distinct, line-numbered finding.
+
+A domain-consistency check also flags any endpoint declared as `METHOD https://…` whose host differs from the skill's own Base URL — an undocumented-destination signal, without touching prose links.
 
 False-positive guard: patterns inside fenced code blocks and descriptive sections ("Limitations", "Detection Patterns") are excluded, so legitimate security tools are not flagged. Negated statements ("this skill does **not** override your system instructions") are explicitly excluded from the prompt-injection rules. This is regression-tested against the `benign_security_skill` and `supply_chain_skill` fixtures.
 
 ### Context hygiene
 
-Every audit includes a `context_cost` object:
+Every audit includes a `context_cost` object with a **per-model** breakdown:
 
 ```json
 {
   "tokens_estimate": 4200,
   "size_bytes": 16800,
   "density": "low",
+  "per_model": [
+    { "model": "claude-haiku-4-5", "tokens": 4200, "input_cost_usd": 0.0042, "window_pct": 2.1 },
+    { "model": "gemini-3", "tokens": 4450, "input_cost_usd": 0.0623, "window_pct": 0.42 }
+  ],
+  "error_margin_pct": 10,
+  "price_source": "API Pricing Look-Up (NANDA Town), as_of 2026-07-03",
   "recommendation": "This skill file is 4,200 tokens — larger than the ~1,500 token median. Information density is low."
 }
 ```
 
 Density is classified as `high`, `medium`, or `low` based on the ratio of useful signals (endpoints, examples, documented sections) to total tokens. Files above 3,000 tokens with low density are explicitly flagged.
+
+**Prices come from another skill in the same registry.** The dollar figures and context-window sizes are sourced live from the **API Pricing Look-Up** skill on NANDA Town — one registry skill enriching the audit of another. Prices refresh in the background (daily); a built-in fallback table keeps the feature working if that service is briefly down, and `price_source` always says which was used. Token counts are calibrated per model family (chars-per-token), honestly labelled with `error_margin_pct` — enough for a load/skip decision, with no heavyweight tokenizer dependency and no keys. Pass `model` to `/audit` to narrow the breakdown to your model; the answer is byte-identical for the same file and price snapshot.
+
+### Ranked discovery — the decision engine
+
+`GET /discover` doesn't just list the registry with verdicts — it returns it **best-first**. Each entry gets a `rank` and a plain-language `rank_reason`. Passing skills lead, ordered by a published composite (`overall_score` + a density bonus of `+5 / 0 / -5` for high/medium/low), with deterministic tie-breaks (score, then fewer critical findings, then name); failing skills follow; unauditable entries rank last with the reason. The formula is exposed verbatim at `/benchmarks` — no hidden magic. This is the core mission in one call: not "here's what exists", but "here's the safe skill to load, and why".
 
 ### Verdicts
 
@@ -170,7 +185,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-The test suite covers: SSRF blocking (including decimal-encoded loopback and cloud-metadata targets), score renormalization, verdict boundaries, Ed25519 signature round-trip with tamper detection, the false-positive guard on a legitimate security skill, negative samples for every FP-prone rule (negated "does not override" phrasing, plain `pip install` from an index), evasion resistance (zero-width-spliced and homoglyph-disguised injections, short Base64-smuggled payloads), URL-finding de-duplication, method-mismatch crash regression, skill-name sanitisation, non-skill/empty-document rejection, plain-Markdown parsing, and end-to-end verdicts on good/evil/benign/broken/supply-chain fixtures.
+The test suite covers: SSRF blocking (including decimal-encoded loopback and cloud-metadata targets), score renormalization, verdict boundaries, Ed25519 signature round-trip with tamper detection, the false-positive guard on legitimate security **and payment** skills, negative samples for every FP-prone rule (negated "does not override" phrasing, plain `pip install` from an index, capped auto-pay, an `X-Api-Key` auth doc, placeholder `sk-...`), evasion resistance (zero-width-spliced and homoglyph-disguised injections, short Base64-smuggled payloads), the per-model cost estimator (unknown-model rejection, single-model narrowing), deterministic `/discover` ranking, URL-finding de-duplication, method-mismatch crash regression, skill-name sanitisation, non-skill/empty-document rejection, plain-Markdown parsing, and end-to-end verdicts on good/evil/benign/broken/supply-chain/**payment-trap** fixtures.
 
 ---
 

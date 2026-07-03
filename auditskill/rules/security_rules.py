@@ -1,16 +1,20 @@
 """Security scanning rules organised by category for SKILL.md auditing.
 
 Each rule defines a regex pattern that flags potentially dangerous content
-in a SKILL.md file.  Rules are grouped into seven categories:
+in a SKILL.md file.  Rules are grouped into eight categories:
 
 - **PROMPT_INJECTION** — attempts to hijack agent behaviour.
-- **DATA_EXFILTRATION** — attempts to leak sensitive data externally.
+- **DATA_EXFILTRATION** — attempts to leak sensitive data externally
+  (including hardcoded live provider secrets in the document itself).
 - **UNSAFE_OPERATIONS** — destructive system/shell/SQL commands.
 - **HIDDEN_INSTRUCTIONS** — steganographic or obfuscated instructions.
 - **SCOPE_CREEP** — over-broad permission or capability claims.
 - **SUPPLY_CHAIN** — installing/executing code fetched from remote sources.
 - **AGENT_CAPTURE** — rerouting agent traffic, spawning resident daemons,
   or demanding mandatory gating through a single external service.
+- **PAYMENT_SAFETY** — credential hand-off (send the agent's own LLM
+  provider API key to the skill's server), auto-funding without a spending
+  cap, and unbounded payment-retry loops between agents.
 
 All patterns are designed for ``re.IGNORECASE`` and use raw strings.
 """
@@ -218,6 +222,25 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
             "Detects curl commands that POST sensitive values (secrets, "
             "tokens, passwords) to a remote endpoint."
         ),
+    ),
+    SecurityRule(
+        rule_id="SEC-034",
+        category="data_exfiltration",
+        severity="high",
+        pattern=(
+            r"(sk-ant-[A-Za-z0-9_\-]{20,}"
+            r"|(?<![A-Za-z0-9_])sk-[A-Za-z0-9]{20,}"
+            r"|AIza[0-9A-Za-z_\-]{35}"
+            r"|ghp_[A-Za-z0-9]{36,}"
+            r"|AKIA[0-9A-Z]{16})"
+        ),
+        description=(
+            "Detects a hardcoded live-looking provider secret (OpenAI sk-, "
+            "Anthropic sk-ant-, Google AIza…, GitHub ghp_, AWS AKIA…) in the "
+            "document.  Short placeholders like 'sk-...' or 'sk-XXXX' do not "
+            "match — the pattern requires real key length and charset."
+        ),
+        is_code_block_safe=False,
     ),
 ]
 
@@ -512,6 +535,71 @@ _AGENT_CAPTURE_RULES: list[SecurityRule] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Category 8 — PAYMENT SAFETY  (critical/high/medium)
+# ---------------------------------------------------------------------------
+# Motivated by the live NANDA Town registry: 3 of 16 submissions are about
+# agent payments/escrow, and one deployed skill instructs agents to POST
+# their own LLM-provider API key (sk-, sk-ant-, AIzaSy, gsk_) to its server.
+# These rules catch credential hand-off and the "hallucinatory spending
+# loop" patterns discussed in the agent-payments community.
+
+_PAYMENT_SAFETY_RULES: list[SecurityRule] = [
+    SecurityRule(
+        rule_id="SEC-031",
+        category="payment_safety",
+        severity="critical",
+        pattern=(
+            r"(set[-_\s]?api[-_\s]?key\b"
+            r"|(openai|anthropic|google|gemini|groq|llm|provider)\s+api[\s_-]?key"
+            r"|api[\s_-]?key[^\n]{0,60}(sk-ant-|(?<![A-Za-z0-9])sk-[A-Za-z0-9]|AIzaSy|gsk_))"
+        ),
+        description=(
+            "Detects credential hand-off: the skill asks the agent to send "
+            "its own LLM-provider API key (OpenAI/Anthropic/Gemini/Groq) to "
+            "the skill's server — e.g. a set-api-key endpoint or provider "
+            "key prefixes next to 'api key'.  Ordinary auth docs ('provide "
+            "your API key in the X-Api-Key header') do not match."
+        ),
+        is_code_block_safe=False,
+    ),
+    SecurityRule(
+        rule_id="SEC-032",
+        category="payment_safety",
+        severity="high",
+        pattern=(
+            r"(auto[-\s]?|automatically\s+)(pay|fund|accept|approve)\w*"
+            r"(?![^\n]*(up\s+to|capped?\s+at|limit(ed)?\s+(to|of)"
+            r"|max[_\s]?(total|imum)|confirmation|approval))"
+        ),
+        description=(
+            "Detects automatic payment/funding/acceptance instructions with "
+            "no spending cap on the same line ('automatically fund the "
+            "escrow for every task').  Capped forms ('automatically pay up "
+            "to the max_total limit') do not match."
+        ),
+    ),
+    SecurityRule(
+        rule_id="SEC-033",
+        category="payment_safety",
+        severity="medium",
+        pattern=(
+            r"(keep\s+paying"
+            r"|retry\s+[^\n]{0,30}payment"
+            r"|pay\s+[^\n]{0,20}until\s+[^\n]{0,20}succe"
+            r"|drain\s+[^\n]{0,40}until"
+            r"|recurring\s+[^\n]{0,40}without\s+(a\s+)?(limit|cap)"
+            r"|without\s+(a\s+)?spending\s+(limit|cap))"
+        ),
+        description=(
+            "Detects spending-loop instructions — retry a payment until it "
+            "succeeds, keep paying, drain until stopped, or recurring "
+            "payments explicitly without a limit.  The classic "
+            "'hallucinatory spending loop' between agents."
+        ),
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Aggregate registry
 # ---------------------------------------------------------------------------
 
@@ -523,6 +611,7 @@ _ALL_RULES: list[SecurityRule] = (
     + _SCOPE_CREEP_RULES
     + _SUPPLY_CHAIN_RULES
     + _AGENT_CAPTURE_RULES
+    + _PAYMENT_SAFETY_RULES
 )
 
 # Build a quick lookup index by category (computed once at import time).
@@ -537,7 +626,7 @@ for _rule in _ALL_RULES:
 
 
 def get_all_rules() -> list[SecurityRule]:
-    """Return all 30 security rules across every category.
+    """Return all 34 security rules across every category.
 
     The returned list is a shallow copy so callers can filter or sort
     without mutating the module-level registry.
@@ -551,7 +640,8 @@ def get_rules_by_category(category: str) -> list[SecurityRule]:
     Args:
         category: One of ``prompt_injection``, ``data_exfiltration``,
             ``unsafe_operations``, ``hidden_instructions``,
-            ``scope_creep``, ``supply_chain``, or ``agent_capture``.
+            ``scope_creep``, ``supply_chain``, ``agent_capture``,
+            or ``payment_safety``.
 
     Returns:
         A list of matching :class:`SecurityRule` instances.  If the

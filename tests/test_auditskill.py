@@ -189,6 +189,79 @@ async def test_supply_chain_skill_fails():
     assert "SEC-005" not in fired
 
 
+async def test_payment_trap_skill_fails():
+    # Credential hand-off (send your provider API key) + auto-fund without a
+    # cap + spending loop → payment_safety category, verdict FAILS.
+    r = await run_audit(_read("payment_trap_skill.md"), mode="safe_static")
+    assert r.verdict == "FAILS_BASIC_AUDIT"
+    cats = {f.category for f in r.security.findings}
+    assert "payment_safety" in cats
+    fired = {f.rule_id for f in r.security.findings}
+    assert "SEC-031" in fired  # provider-key hand-off
+    # The single-line negated disclaimer must NOT trip prompt-injection rules.
+    assert "SEC-003" not in fired
+    assert "SEC-005" not in fired
+
+
+async def test_benign_payment_skill_passes():
+    # Capped escrow with an X-Api-Key auth doc must not false-fire the new
+    # payment_safety or credential-handoff rules.
+    r = await run_audit(_read("benign_payment_skill.md"), mode="safe_static")
+    assert r.verdict in ("PASS_BASIC_AUDIT", "PASS_WITH_WARNINGS")
+    sev = {f.severity for f in r.security.findings}
+    assert "critical" not in sev and "high" not in sev, [
+        (f.rule_id, f.severity, f.detail) for f in r.security.findings
+    ]
+
+
+async def test_context_cost_reports_per_model():
+    # Every audit now carries per-model token/cost estimates (from the
+    # in-memory price snapshot — no network in safe_static).
+    r = await run_audit(_read("good_skill.md"), mode="safe_static")
+    assert r.context_cost.per_model, "per_model should be populated"
+    for c in r.context_cost.per_model:
+        assert c.tokens > 0 and c.input_cost_usd >= 0 and c.window_pct >= 0
+    assert r.context_cost.price_source  # provenance string present
+
+
+def test_pricing_unknown_model_raises():
+    from auditskill.core import pricing
+    with pytest.raises(ValueError):
+        pricing.estimate_for_models(1000, 0, model="not-a-real-model")
+
+
+def test_pricing_model_narrowing():
+    from auditskill.core import pricing
+    one, _ = pricing.estimate_for_models(1000, 0, model=pricing.known_models()[0])
+    assert len(one) == 1
+
+
+def test_discover_ranking_is_deterministic():
+    from auditskill.api.models import DiscoverResult
+    from auditskill.core.discover import rank_results
+
+    def mk(name, audited, verdict, score, density="high", reason=None):
+        return DiscoverResult(
+            name=name, audited=audited, verdict=verdict, score=score,
+            context_cost={"density": density}, reason=reason,
+        )
+
+    rs = [
+        mk("z-good", True, "PASS_BASIC_AUDIT", 90, "high"),
+        mk("a-warn", True, "PASS_WITH_WARNINGS", 72, "low"),
+        mk("bad", True, "FAILS_BASIC_AUDIT", 10),
+        mk("unav", False, None, None, reason="no content"),
+        mk("a-good", True, "PASS_BASIC_AUDIT", 90, "high"),
+    ]
+    ordered = rank_results(rs)
+    names = [r.name for r in ordered]
+    # tie on composite 95 → name tie-break puts a-good before z-good;
+    # FAILS never ranks above a passing entry; unaudited is always last.
+    assert names == ["a-good", "z-good", "a-warn", "bad", "unav"]
+    assert ordered[-1].name == "unav" and ordered[-1].rank == 5
+    assert all(r.rank_reason for r in ordered)
+
+
 async def test_state_changing_methods_never_executed():
     # evil_skill declares POST/DELETE; liveness must skip them, never call them.
     r = await run_audit(_read("evil_skill.md"), mode="liveness")
