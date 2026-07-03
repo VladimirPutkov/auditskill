@@ -150,6 +150,9 @@ _DESCRIPTIVE_HEADING_KEYWORDS: tuple[str, ...] = (
     "known",
     "what this does not",
     "what it does not",
+    "how",
+    "problem",
+    "overview",
 )
 
 # Only these categories are suppressed inside descriptive sections.  Prompt
@@ -161,7 +164,7 @@ _DESCRIPTIVE_HEADING_KEYWORDS: tuple[str, ...] = (
 # The supply-chain and proxy/daemon rules are code-block-unsafe and are
 # never suppressed.
 _DESCRIPTIVE_SKIP_CATEGORIES: frozenset[str] = frozenset(
-    {"unsafe_operations", "scope_creep", "agent_capture"}
+    {"unsafe_operations", "scope_creep", "agent_capture", "payment_safety"}
 )
 
 _HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)")
