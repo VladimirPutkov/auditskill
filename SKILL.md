@@ -9,9 +9,21 @@ AuditSkill audits a third-party SKILL.md before its text becomes part of your in
 
 Built for **autonomous agents**, not humans. A person can open a skill and judge it by hand; an agent that discovers and loads skills at runtime cannot pause to ask. That is the gap AuditSkill fills — a machine an agent can call to vet a skill before trusting it. Discovery answers "what skills exist"; AuditSkill answers "should I actually use this one?" Find -> Verify -> Load.
 
+AuditSkill is a **pre-load** auditor — it acts before a skill's text enters your context. It complements identity registries, runtime firewalls, and payment or reputation layers, which act while you work; none of them audit the document itself before you read it.
+
 ## Base URL
 
 https://auditskill.up.railway.app
+
+## Fast path
+
+```
+1. Scan the registry:  GET /discover?mode=safe_static&limit=20   -> pre-audited, best-first; pick a PASS
+2. Audit one skill:    POST /audit  with skill_url or skill_md
+3. Branch on verdict:  PASS_BASIC_AUDIT -> load
+                       PASS_WITH_WARNINGS -> read issues, load carefully
+                       REQUIRES_HUMAN_REVIEW / FAILS_BASIC_AUDIT -> do not load
+```
 
 ## When to use this
 
@@ -84,12 +96,12 @@ A well-formed skill returns `verdict: PASS_BASIC_AUDIT` with `security.score: 10
 
 ### GET /discover
 
-Audit the live NANDA Town registry inline and return it **best-first**. Each entry carries a verdict, score, risk level, certificate, a compact cost summary, and a `rank` with a plain-language `rank_reason`. Passing skills come first (ordered by a published composite of safety and context density), then failing skills, then anything that could not be fetched safely. You never see an unvetted skill presented as safe.
+Audit the live NANDA Town registry inline and return it **best-first**. Each entry carries a verdict, score, risk level, certificate, a compact cost summary, and a `rank` with a plain-language `rank_reason`. Passing skills come first (ordered by a published composite of safety and context density), then failing skills, then anything that could not be fetched safely.
 
 Query params: `q` (filter by name/description/tags), `mode` (`safe_static` default or `liveness`), `limit` (1-30, default 20).
 
 ```bash
-curl "https://auditskill.up.railway.app/discover?q=contract&mode=safe_static&limit=2"
+curl "https://auditskill.up.railway.app/discover?mode=safe_static&limit=3"
 ```
 
 Live snapshot — registry counts and scores change as the registry changes:
@@ -97,25 +109,32 @@ Live snapshot — registry counts and scores change as the registry changes:
 ```json
 {
   "registry": "https://nandatown.projectnanda.org/api/skills",
-  "total_in_registry": 19,
-  "returned": 2,
+  "total_in_registry": 20,
+  "returned": 3,
   "results": [
     {
-      "name": "A2A Consulting Contract",
+      "name": "AgentHall — City Hall for Agents",
       "verdict": "PASS_WITH_WARNINGS",
-      "score": 70,
+      "score": 72,
       "risk_level": "none",
       "rank": 1,
-      "rank_reason": "composite 75 = score 70 + density bonus +5 (high)",
-      "context_cost": { "tokens_estimate": 3714, "density": "high", "cheapest_input_usd": 0.003268 },
-      "certificate_id": "seal_3f340360cecc"
+      "rank_reason": "composite 77 = score 72 + density bonus +5 (high)",
+      "context_cost": { "tokens_estimate": 2887, "density": "high", "cheapest_input_usd": 0.002541 },
+      "certificate_id": "seal_40b6f2839a16"
     },
     {
-      "name": "AgentBroker X",
+      "name": "The Town Notary",
+      "verdict": "REQUIRES_HUMAN_REVIEW",
+      "score": 53,
+      "rank": 2,
+      "rank_reason": "composite 58 = score 53 + density bonus +5 (high)"
+    },
+    {
+      "name": "AgentHall — City Hall for Agents",
       "audited": false,
       "verdict": null,
-      "rank": 2,
-      "reason": "Could not fetch source_url (SSRFBlockedError): response body too large"
+      "rank": 3,
+      "reason": "Could not fetch source_url (SSRFBlockedError): SSRF blocked: Response body too large: 295182 bytes (max 262144)"
     }
   ]
 }
@@ -248,6 +267,8 @@ The exact rule count and category breakdown are always live at `GET /benchmarks`
 ## Certificates
 
 Every verdict is packaged as an Ed25519-signed certificate carrying the `skill_hash`, `verdict`, `score`, `checks`, `tested_at`, and `valid_until`. Verify it two ways: online (`POST /verify`) or offline (check the `signature` against the public key from `/.well-known/auditskill-keys`). Portable and stateless — no callback to AuditSkill required.
+
+Proof by dogfood: this SKILL.md is itself audited by the service — it returns `PASS_BASIC_AUDIT` with zero security findings, and its certificate verifies via `POST /verify`.
 
 ## Errors
 
