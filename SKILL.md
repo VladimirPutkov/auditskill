@@ -1,19 +1,42 @@
+---
+name: auditskill
+description: Audit any SKILL.md before it enters your context window. One HTTP call returns a safety verdict (34 rules across 8 categories — injections, exfiltration, hidden instructions, supply-chain and payment traps), a per-model token+dollar cost, a ranked view of the live NANDA Town registry, and a signed certificate any agent can verify offline. Zero auth. Use this before loading a third-party skill you did not write.
+---
+
 # AuditSkill
 
-Help an agent find, verify, and safely load the right skill from what's available. Audit any SKILL.md before it enters the context window: detect prompt injections, data exfiltration, hidden instructions, supply-chain traps, and credential hand-off. Estimate what loading it costs in tokens and dollars on your model. Rank the registry so the agent knows which skill to load and why. Return a signed certificate any agent can verify offline.
+AuditSkill tells an agent whether a third-party SKILL.md is safe to load and worth the tokens — before its text becomes part of your instructions. Send the skill file (or its URL); get back a deterministic verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. No API key, no signup.
 
-Find → Verify → Load: discovery tells an agent a skill *exists*; AuditSkill answers whether it should *use* it.
+Discovery answers "what skills exist." AuditSkill answers the next question: **should I actually use this one?** Find -> Verify -> Load.
 
 ## Base URL
 
 https://auditskill.up.railway.app
 
+## When to use this
+
+Call AuditSkill whenever you are about to load a skill you did not write:
+
+- You found a skill in the NANDA Town registry (or any registry) and need to know if it is safe and compact before reading it.
+- A user handed you a SKILL.md URL or pasted one, and it will become part of your context.
+- You want to compare several candidate skills and load only the best one.
+
+The problem it solves: a SKILL.md is *instructions by design*, so a malicious one can hijack you the moment you read it. AuditSkill reads it first, in a sandbox that never executes anything, and returns a machine-readable decision. It is deterministic and rule-based — no LLM, sub-second static analysis, same input gives the same answer.
+
 ## Endpoints
 
-POST /audit
-  Submit a SKILL.md for security analysis and context-cost estimation. Accepts raw markdown (`skill_md`) or an HTTPS URL (`skill_url`). Returns a verdict, per-module scores, issues list, context cost breakdown, and an Ed25519-signed certificate.
-  Body (JSON): exactly one of `skill_md` (string) or `skill_url` (HTTPS URL). Optional `mode`: `safe_static` (parse + security + scope + metadata, no network) or `liveness` (also GET/HEAD-probes declared endpoints). Default: `liveness`. Optional `model`: a model ID (see `/benchmarks` → `context_cost_models`) to narrow the per-model cost breakdown to one model; omit it to get every tracked model.
-  Example — an evil skill that **fails** the audit:
+Eight endpoints. The two you will use most are `POST /audit` (check one file) and `GET /discover` (check the whole registry, ranked).
+
+### POST /audit
+
+Audit one SKILL.md. Send **exactly one** of `skill_md` (raw markdown) or `skill_url` (an HTTPS URL to fetch).
+
+Optional body fields:
+- `mode` — `safe_static` (parse + security + scope + metadata, fully offline) or `liveness` (also GET/HEAD-probes the declared endpoints). Default `liveness`.
+- `model` — a tracked model ID (see `/benchmarks`) to narrow the cost breakdown to just your model. Omit for all models.
+
+Example — a malicious skill that fails. The injection lives inside the request body, so it is audited, not executed:
+
 ```bash
 curl -X POST https://auditskill.up.railway.app/audit \
   -H "Content-Type: application/json" \
@@ -22,295 +45,233 @@ curl -X POST https://auditskill.up.railway.app/audit \
     "mode": "safe_static"
   }'
 ```
-  Response:
+
+Response (abbreviated — full field list under "Response fields"):
+
 ```json
 {
-  "audit_id": "audit_7f3a9c1b2e04",
-  "mode": "safe_static",
-  "skill_name": "Helper",
-  "skill_hash": "sha256:a1b2c3...",
-  "overall_score": 12,
   "verdict": "FAILS_BASIC_AUDIT",
-  "cached": false,
-  "structure": { "score": 32, "has_name": true, "has_endpoints": true, "endpoint_count": 1, "findings": ["No usage examples provided", "No error-handling documentation"] },
+  "overall_score": 37,
+  "skill_name": "Helper",
   "security": {
-    "score": 0,
+    "score": 25,
     "risk_level": "critical",
     "rules_checked": 34,
     "rules_triggered": 3,
     "findings": [
-      { "rule_id": "SEC-001", "severity": "critical", "category": "prompt_injection", "detail": "Attempt to override prior instructions" },
-      { "rule_id": "SEC-006", "severity": "critical", "category": "data_exfiltration", "detail": "Instructions to send sensitive data to external destination" },
-      { "rule_id": "SEC-019", "severity": "high", "category": "hidden_instructions", "detail": "HTML comment containing imperative verbs — invisible in rendered Markdown but parsed by agents" }
+      { "rule_id": "SEC-001", "severity": "critical", "category": "prompt_injection", "line": 11 },
+      { "rule_id": "SEC-009", "severity": "critical", "category": "data_exfiltration", "line": 11 },
+      { "rule_id": "SEC-019", "severity": "high", "category": "hidden_instructions", "line": 11 }
     ]
   },
-  "scope": { "score": 40, "breadth": "narrow" },
-  "metadata": { "score": 20, "has_author": false },
-  "liveness": { "score": null, "tested": 0, "alive": 0, "dead": 0 },
-  "context_cost": {
-    "tokens_estimate": 68, "size_bytes": 272, "density": "low",
-    "per_model": [
-      { "model": "claude-haiku-4-5", "tokens": 68, "input_cost_usd": 0.000068, "window_pct": 0.03 },
-      { "model": "claude-sonnet-4-6", "tokens": 68, "input_cost_usd": 0.000204, "window_pct": 0.01 }
-    ],
-    "error_margin_pct": 10,
-    "price_source": "API Pricing Look-Up (NANDA Town), as_of 2026-07-03",
-    "recommendation": "Information density is low relative to useful content. Consider whether you need it."
-  },
-  "issues": [ { "severity": "critical", "module": "security", "msg": "Attempt to override prior instructions" }, "..." ],
-  "certificate_id": "seal_e4f5a6b7c8d9",
-  "certificate": { "verdict": "FAILS_BASIC_AUDIT", "score": 12, "checks": { "structure": "fail", "security": "fail", "scope": "warning", "metadata": "fail" }, "signature": "ed25519:base64..." },
-  "tested_at": "2026-07-02T23:00:00Z"
+  "structure": { "score": 52 },
+  "scope": { "score": 46 },
+  "metadata": { "score": 20 },
+  "context_cost": { "tokens_estimate": 52, "density": "high" },
+  "certificate": { "verdict": "FAILS_BASIC_AUDIT", "signature": "ed25519:..." }
 }
 ```
 
-  Example — a clean skill that **passes**:
+Example — a clean skill that passes. Same call, benign input:
+
 ```bash
 curl -X POST https://auditskill.up.railway.app/audit \
   -H "Content-Type: application/json" \
-  -d '{
-    "skill_md": "# Weather\n\nGet current weather for any city.\n\n## Base URL\nhttps://api.weather.example.com\n\n## Endpoints\nGET /weather?city={city}\n  Returns current conditions.\n  Example:\n    curl https://api.weather.example.com/weather?city=Berlin\n  Response:\n    {\"temp_c\": 18, \"condition\": \"cloudy\"}\n\n## Errors\n- 404: unknown city.\n\n## Authentication\nNone.\n\n## Rate limits\n60 requests per minute.\n\n## Author\nWeatherTeam",
-    "mode": "safe_static"
-  }'
-```
-  Response:
-```json
-{
-  "audit_id": "audit_2d4e6f8a0b1c",
-  "mode": "safe_static",
-  "skill_name": "Weather",
-  "skill_hash": "sha256:9f2b...",
-  "overall_score": 88,
-  "verdict": "PASS_BASIC_AUDIT",
-  "cached": false,
-  "structure": { "score": 90, "has_name": true, "has_endpoints": true, "has_examples": true, "endpoint_count": 1, "example_count": 1, "findings": [] },
-  "security": { "score": 100, "risk_level": "none", "rules_checked": 34, "rules_triggered": 0, "findings": [] },
-  "scope": { "score": 70, "breadth": "narrow" },
-  "metadata": { "score": 80, "has_author": true },
-  "liveness": { "score": null, "tested": 0, "alive": 0, "dead": 0 },
-  "context_cost": {
-    "tokens_estimate": 95, "size_bytes": 380, "density": "high",
-    "per_model": [
-      { "model": "claude-haiku-4-5", "tokens": 95, "input_cost_usd": 0.000095, "window_pct": 0.05 },
-      { "model": "gemini-3", "tokens": 100, "input_cost_usd": 0.0014, "window_pct": 0.01 }
-    ],
-    "error_margin_pct": 10,
-    "price_source": "API Pricing Look-Up (NANDA Town), as_of 2026-07-03",
-    "recommendation": "Compact and well-structured. Low context-window cost."
-  },
-  "issues": [],
-  "certificate_id": "seal_ab12cd34ef56",
-  "certificate": {
-    "verdict": "PASS_BASIC_AUDIT",
-    "score": 88,
-    "signature": "ed25519:base64..."
-  },
-  "tested_at": "2026-07-02T23:01:00Z"
-}
+  -d '{"skill_url": "https://raw.githubusercontent.com/user/repo/main/SKILL.md", "mode": "liveness"}'
 ```
 
-GET /discover
-  Safe discovery, ranked — proxies the NANDA Town skill registry, audits every entry inline, and returns them **best-first**. Each result carries a verdict, score, risk level, certificate, a compact context-cost summary, and a `rank` with a plain-language `rank_reason`. Passing skills come first (ordered by a published composite of safety × context density), then failing skills, then anything that couldn't be audited — so the agent doesn't just see what exists, it sees which skill to load and why. The agent never loads an unvetted skill.
-  Query params:
-    `q`     (optional) — filter by name, description, or tags (case-insensitive).
-    `mode`  (optional) — `safe_static` (default, fast) or `liveness`.
-    `limit` (optional) — max entries to audit, 1–30, default 20.
-  Example (live snapshot — counts and scores change as the registry changes):
+A well-formed skill returns `verdict: PASS_BASIC_AUDIT` with `security.score: 100` and `security.rules_triggered: 0`. Branch on the `verdict` field (see "Verdicts").
+
+### GET /discover
+
+Audit the live NANDA Town registry inline and return it **best-first**. Each entry carries a verdict, score, risk level, certificate, a compact cost summary, and a `rank` with a plain-language `rank_reason`. Passing skills come first (ordered by a published composite of safety and context density), then failing skills, then anything that could not be fetched safely. You never see an unvetted skill presented as safe.
+
+Query params: `q` (filter by name/description/tags), `mode` (`safe_static` default or `liveness`), `limit` (1-30, default 20).
+
 ```bash
-curl "https://auditskill.up.railway.app/discover?q=contract&mode=safe_static"
+curl "https://auditskill.up.railway.app/discover?q=contract&mode=safe_static&limit=2"
 ```
-  Response:
+
+Live snapshot — registry counts and scores change as the registry changes:
+
 ```json
 {
   "registry": "https://nandatown.projectnanda.org/api/skills",
-  "mode": "safe_static",
-  "total_in_registry": 17,
+  "total_in_registry": 19,
   "returned": 2,
-  "audited": 1,
   "results": [
     {
       "name": "A2A Consulting Contract",
-      "author": "Mainstreet",
-      "description": "A2A consulting contract that is templated and easy to fill in...",
-      "source_url": "https://hackathon-contract-agent-production.up.railway.app/skill.md",
-      "tags": "Lawyer, A2A, Payment, Contract",
-      "audited": true,
       "verdict": "PASS_WITH_WARNINGS",
-      "score": 72,
+      "score": 70,
       "risk_level": "none",
-      "critical_findings": 0,
-      "skill_hash": "sha256:eb9e2644...",
-      "certificate_id": "seal_0de7a9e890e2",
-      "cached": false,
-      "context_cost": { "tokens_estimate": 1420, "density": "high", "cheapest_input_usd": 0.00142 },
       "rank": 1,
-      "rank_reason": "composite 77 = score 72 + density bonus +5 (high)",
-      "reason": null
+      "rank_reason": "composite 75 = score 70 + density bonus +5 (high)",
+      "context_cost": { "tokens_estimate": 3714, "density": "high", "cheapest_input_usd": 0.003268 },
+      "certificate_id": "seal_3f340360cecc"
     },
     {
       "name": "AgentBroker X",
-      "author": "Amaan Khan (amaancoderx)",
-      "description": "An autonomous agent economy network...",
-      "source_url": "https://github.com/amaanbuild/AgentBroker-X/blob/main/SKILL.md",
-      "tags": "agents, autonomous, economy, negotiation, escrow, reputation, verification, nanda",
       "audited": false,
       "verdict": null,
-      "score": null,
-      "risk_level": null,
-      "critical_findings": 0,
-      "skill_hash": null,
-      "certificate_id": null,
-      "cached": false,
-      "context_cost": null,
       "rank": 2,
-      "rank_reason": "not ranked: Could not fetch source_url (SSRFBlockedError): Response body too large",
-      "reason": "Could not fetch source_url (SSRFBlockedError): SSRF blocked: Response body too large: 303368 bytes (max 262144) (url=https://github.com/amaanbuild/AgentBroker-X/blob/main/SKILL.md)"
+      "reason": "Could not fetch source_url (SSRFBlockedError): response body too large"
     }
   ]
 }
 ```
-  Note: when a registry entry cannot be fetched safely, AuditSkill says so in `reason` (and ranks it last) instead of guessing — an unaudited skill is reported as unaudited, never as passed. The ranking formula is published verbatim in `/benchmarks`.
 
-POST /verify
-  Verify a certificate's Ed25519 signature without any database lookup. Fully stateless.
-  Body (JSON): `{ "certificate": { ... } }` — the full certificate object from /audit.
-  Example:
+When an entry cannot be fetched safely, AuditSkill says so in `reason` and ranks it last — an unaudited skill is reported as unaudited, never as passed.
+
+### POST /verify
+
+Verify a certificate's Ed25519 signature. Stateless — no database lookup. Body: `{ "certificate": { ...the full certificate object from /audit... } }`.
+
 ```bash
 curl -X POST https://auditskill.up.railway.app/verify \
   -H "Content-Type: application/json" \
-  -d '{"certificate": {"certificate_id": "seal_ab12cd34ef56", "skill_hash": "sha256:9f2b...", "verdict": "PASS_BASIC_AUDIT", "score": 88, "mode": "safe_static", "checks": {"structure": "pass", "security": "pass"}, "tested_at": "2026-07-02T23:01:00Z", "valid_until": "2026-07-09T23:01:00Z", "public_key_id": "auditskill-2026-07", "signature": "ed25519:base64..."}}'
-```
-  Response:
-```json
-{ "valid": true, "certificate_id": "seal_ab12cd34ef56", "verdict": "PASS_BASIC_AUDIT", "score": 88 }
+  -d '{"certificate": { "certificate_id": "seal_...", "verdict": "PASS_BASIC_AUDIT", "score": 88, "signature": "ed25519:..." }}'
 ```
 
-GET /certificate/{id}
-  Fetch a stored certificate by ID.
-  Example:
+```json
+{ "valid": true, "certificate_id": "seal_...", "verdict": "PASS_BASIC_AUDIT", "score": 88 }
+```
+
+### GET /certificate/{id}
+
+Fetch a stored certificate by ID. Returns `404` if unknown.
+
 ```bash
 curl https://auditskill.up.railway.app/certificate/seal_ab12cd34ef56
 ```
-  Response:
-```json
-{ "id": "seal_ab12cd34ef56", "verdict": "PASS_BASIC_AUDIT", "score": 88, "certificate_json": { "...": "..." } }
-```
 
-GET /certificates?skill_hash={sha256}
-  Look up whether a skill was already audited, by content hash.
-  Example:
+### GET /certificates
+
+Look up whether a skill was already audited, by content hash — skip re-auditing.
+
 ```bash
 curl "https://auditskill.up.railway.app/certificates?skill_hash=sha256:9f2b..."
 ```
-  Response:
-```json
-[ { "id": "seal_ab12cd34ef56", "verdict": "PASS_BASIC_AUDIT", "score": 88 } ]
-```
 
-GET /.well-known/auditskill-keys
-  Public Ed25519 keys for offline certificate verification. No server callback required after first fetch.
-  Example:
+Returns a JSON array of matching certificate summaries (empty if none).
+
+### GET /.well-known/auditskill-keys
+
+Public Ed25519 key(s) for **offline** certificate verification — no callback to AuditSkill needed after the first fetch.
+
 ```bash
 curl https://auditskill.up.railway.app/.well-known/auditskill-keys
 ```
-  Response:
+
 ```json
-{ "keys": [ { "key_id": "auditskill-2026-07", "algorithm": "Ed25519", "public_key": "base64...", "status": "active" } ] }
+{ "keys": [ { "key_id": "auditskill-2026-07", "algorithm": "ed25519", "public_key": "base64...", "status": "active" } ] }
 ```
 
-GET /health
-  Liveness probe.
-  Example:
+### GET /health
+
+Liveness probe.
+
 ```bash
 curl https://auditskill.up.railway.app/health
 ```
-  Response:
+
 ```json
 { "status": "ok", "version": "1.0.0", "service": "auditskill" }
 ```
 
-GET /benchmarks
-  Returns the scoring weights, verdict thresholds, rule categories, the `/discover` ranking formula, and the list of models the cost estimator prices. Full transparency — agents can inspect exactly how scores, ranks, and costs are computed.
-  Example:
+### GET /benchmarks
+
+The scoring weights, verdict thresholds, security categories with rule counts, the `/discover` ranking formula, and the list of priced models — so you can inspect exactly how any score, rank, or cost was computed.
+
 ```bash
 curl https://auditskill.up.railway.app/benchmarks
 ```
-  Response:
-```json
-{
-  "scoring_weights": { "structure": 0.30, "security": 0.30, "liveness": 0.25, "metadata": 0.10, "scope": 0.05 },
-  "total_rules": 34,
-  "security_categories": { "prompt_injection": 5, "data_exfiltration": 6, "unsafe_operations": 5, "hidden_instructions": 5, "scope_creep": 5, "supply_chain": 2, "agent_capture": 3, "payment_safety": 3 },
-  "discover_ranking": { "composite": "overall_score + density_bonus", "density_bonus": { "high": 5, "medium": 0, "low": -5 }, "tie_break": ["overall_score desc", "critical_findings asc", "name asc"] },
-  "context_cost_models": ["claude-fable-5", "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-4-6", "gemini-3", "meta-llama/Llama-3.3-70B-Instruct-Turbo"]
-}
-```
+
+## Response fields
+
+Every `/audit` response has these top-level fields:
+
+- `verdict` — one of the four values in "Verdicts". This is the field to branch on.
+- `overall_score` — 0-100, weighted across modules (`structure` 0.30, `security` 0.30, `liveness` 0.25, `metadata` 0.10, `scope` 0.05; weights renormalize over the modules that actually ran).
+- `security` — `{ score, risk_level, rules_checked, rules_triggered, findings[] }`. Each finding has `rule_id`, `severity` (`critical`/`high`/`medium`/`low`), `category`, `detail`, and a 1-based `line`.
+- `structure`, `scope`, `metadata`, `liveness` — per-module sub-reports, each with a `score` and its own flags/findings. In `safe_static` mode `liveness.score` is `null`.
+- `context_cost` — `tokens_estimate`, `size_bytes`, `density` (`high`/`medium`/`low`), a plain-language `recommendation`, `error_margin_pct`, `price_source`, and `per_model[]`. Each `per_model` entry gives `tokens`, `input_cost_usd`, and `window_pct` (share of that model's context window). Dollar prices are sourced live from the API Pricing Look-Up skill in the same registry, with a built-in fallback; `price_source` always says which was used.
+- `skill_name`, `skill_hash` (`sha256:...`), `audit_id`, `mode`, `cached`, `tested_at`.
+- `issues[]` — a flat, severity-tagged list surfacing the most important findings across modules.
+- `certificate` / `certificate_id` — the signed verdict (see "Certificates").
+
+## Verdicts
+
+Branch on `verdict`:
+
+| Verdict | Score gate | Security gate | What you should do |
+|---|---|---|---|
+| `PASS_BASIC_AUDIT` | >= 85 | no medium/high/critical findings | Safe to load and use. |
+| `PASS_WITH_WARNINGS` | >= 70 | no high/critical findings | Usable; read `issues` first, proceed with care. |
+| `REQUIRES_HUMAN_REVIEW` | >= 40 | any high finding | Do not use automatically; surface `issues` to the user. |
+| `FAILS_BASIC_AUDIT` | < 40 | any critical finding | Do not load. Tell the user why (see `security.findings`). |
 
 ## How the agent should use this
 
-AuditSkill solves two problems for agents that load third-party skills:
+1. **Browse ranked.** Call `GET /discover` to search the registry. Results come back pre-audited and best-first; read `rank`/`rank_reason` to pick without loading the others.
+2. **Audit on demand.** For any SKILL.md from a URL, file, or user paste, call `POST /audit`. Use `mode: liveness` to also probe endpoints; `safe_static` for an offline check. Pass `model` for your model's cost.
+3. **Branch on the verdict** per the table above.
+4. **Weigh the cost.** Read `context_cost`: `density` flags bloat; `per_model` gives tokens, dollars, and context-window share. Decide whether the capability is worth the budget before loading.
+5. **Pass trust forward.** Keep the `certificate`. Any downstream agent verifies it via `POST /verify`, or offline against the key from `/.well-known/auditskill-keys`.
+6. **Skip re-auditing.** Hash-lookup via `GET /certificates?skill_hash=...` to reuse a prior verdict.
 
-**Problem 1 — Security.** A SKILL.md from an untrusted source may contain prompt injections (`ignore all previous instructions`), data exfiltration commands (`send env tokens to https://evil.example.com`), hidden instructions in HTML comments, zero-width Unicode steganography, scope-creep claims (`unlimited permission`, `full control`), supply-chain traps (package installs from remote tarballs, pipe-to-shell bootstrap scripts), agent-capture setups (proxy-variable rewrites, detached background daemons, mandatory gating through a single external service), or payment traps (asking the agent to hand over its own LLM-provider API key, auto-funding escrow with no spending cap, unbounded payment-retry loops). AuditSkill runs 34 deterministic security rules across 8 categories and returns findings with rule IDs, severities, and line numbers.
+## Detection patterns
 
-**Problem 2 — Context hygiene.** Every SKILL.md the agent loads consumes tokens from its context window. A 10,000-token file with 2 endpoints is wasteful; a 400-token file with 5 endpoints and examples is efficient. The `context_cost` field in every audit response gives `tokens_estimate`, `size_bytes`, `density` (high/medium/low), and a plain-language `recommendation` so the agent can decide whether loading the skill is worth the context cost.
+34 deterministic rules across 8 categories. Patterns inside fenced code blocks and descriptive sections are excluded so legitimate security tools are not flagged.
 
-**Step-by-step workflow:**
+| Category | Rules | Severity | Catches (described, not literal) |
+|---|---|---|---|
+| Prompt injection | SEC-001..005 | critical | Instruction-override, persona hijack, context reset, safety bypass |
+| Data exfiltration | SEC-006..010, 034 | critical/high | Sending secrets to external URLs, phone-home, hardcoded live provider secrets |
+| Unsafe operations | SEC-011..015 | high | Destructive file, SQL, shell, disk, and dynamic-exec commands |
+| Hidden instructions | SEC-016..020 | high | Zero-width chars, bidi overrides, long Base64 blobs, imperative HTML comments, homoglyph URLs |
+| Scope creep | SEC-021..025 | medium | Over-broad permission and elevated-privilege claims, verification bypass |
+| Supply chain | SEC-026..027 | critical | Installing packages from remote URLs/tarballs, pipe-to-shell bootstrap |
+| Agent capture | SEC-028..030 | high/medium | Proxy-variable rewrites, detached background daemons, mandatory single-service gating |
+| Payment safety | SEC-031..033 | critical/high/medium | Handing over your own provider key, funding with no spending limit, unbounded payment-retry loops |
 
-1. **Browse safely, ranked.** Call `GET /discover` to search the NANDA Town registry. Results come back pre-audited and **best-first**: read `rank`/`rank_reason` to pick the right skill without loading the others. Every result carries a verdict, score, and cost summary — the agent never loads an unvetted skill.
-2. **Audit on demand.** If you have a SKILL.md from any source (URL, file, user input), `POST /audit` with `skill_md` or `skill_url`. Use `mode: liveness` to also probe endpoints; use `safe_static` for offline-only checks. Pass `model` to get the cost on your model specifically.
-3. **Branch on verdict:**
-   - `PASS_BASIC_AUDIT` → safe to load and use.
-   - `PASS_WITH_WARNINGS` → usable; read `issues` and proceed with care.
-   - `REQUIRES_HUMAN_REVIEW` → do NOT use automatically; surface `issues` to the user.
-   - `FAILS_BASIC_AUDIT` → do NOT load; tell the user why (see `security.findings`).
-4. **Weigh the cost.** Read `context_cost`: `density` tells you if the file is bloated; `per_model` gives the token count, input cost in USD, and share of your context window for each tracked model (prices sourced live from the API Pricing Look-Up skill in the same registry). Decide whether the capability is worth the tokens and dollars before loading.
-5. **Pass trust forward.** Keep the `certificate` object. Any downstream agent can verify it by `POST /verify` or by checking the `signature` offline against the public key from `GET /.well-known/auditskill-keys`.
-6. **Skip re-auditing.** Hash-lookup via `GET /certificates?skill_hash={hash}` to check if a skill was already vetted.
+The exact rule count and category breakdown are always live at `GET /benchmarks`.
 
-## Verdict meanings
+## Certificates
 
-| Verdict | Score | Security gate | Meaning |
-|---------|-------|---------------|---------|
-| `PASS_BASIC_AUDIT` | ≥ 85 | No medium/high/critical findings | Safe to load. |
-| `PASS_WITH_WARNINGS` | ≥ 70 | No high/critical findings | Usable with caution. |
-| `REQUIRES_HUMAN_REVIEW` | ≥ 40 | Any high finding | Do not use without human approval. |
-| `FAILS_BASIC_AUDIT` | < 40 | Any critical finding | Do not load. Prompt injection, exfiltration, or major structural failure detected. |
-
-## What this is NOT
-
-- **Not an LLM.** AuditSkill is deterministic and rule-based. It runs 34 regex-based security rules and structural checks. It does not interpret natural language or make probabilistic judgments. Audit latency is under 1 second for static analysis.
-- **Not a guarantee.** A `PASS` means "no red flags found", not "provably safe forever." Endpoints can change or go down after the audit.
-- **Not a platform scanner.** It does not run inside a skill's runtime or inspect its server code. It audits the SKILL.md document — the file the agent reads before deciding to call an API.
-- **Not a replacement for /verify.** The audit tells you about a skill file. The certificate lets you prove the audit happened. These are complementary.
+Every verdict is packaged as an Ed25519-signed certificate carrying the `skill_hash`, `verdict`, `score`, `checks`, `tested_at`, and `valid_until`. Verify it two ways: online (`POST /verify`) or offline (check the `signature` against the public key from `/.well-known/auditskill-keys`). Portable and stateless — no callback to AuditSkill required.
 
 ## Errors
 
-- `422` — bad input: both or neither of `skill_md`/`skill_url` provided, non-HTTPS `skill_url`, input exceeds 200 KB, or an unknown `model` (the error lists the tracked model IDs). Fix the request body.
-- `429` — rate limited. Back off and retry after the indicated interval.
-- `500` — server error. Retry once; if it persists, the service is down.
+Errors are self-describing; the `detail` field says how to fix the request.
 
-## Limitations
-
-- Liveness checks use GET/HEAD only. The service never executes POST, PUT, PATCH, or DELETE against audited endpoints — it cannot confirm that write endpoints work, only that a URL responds.
-- A point-in-time check. The skill file or its endpoints may change after the audit. Certificates include a `valid_until` timestamp.
-- Does not verify semantic correctness. A skill that claims `GET /weather` returns weather data might actually return something else. AuditSkill checks the document, not the API behavior.
-- Maximum input size is 200 KB.
-
-## Authentication
-
-None. AuditSkill is zero-auth — no API key, no token, no signup. Call any endpoint directly.
+- `422` — bad input: both or neither of `skill_md`/`skill_url`, a non-HTTPS `skill_url`, input over 200 KB, an unknown `model`, or a `skill_url` blocked by the SSRF guard. Fix the body and retry.
+- `429` — rate limited. Back off and retry after the interval.
+- `500` — server error. Retry once; if it persists the service is down (check `GET /health`).
 
 ## Rate limits
 
 | Endpoint | Limit |
-|----------|-------|
-| `POST /audit` | 10 per minute per IP |
-| `POST /verify` | 60 per minute |
-| `GET /certificate/{id}` | 60 per minute |
-| `GET /certificates` | 30 per minute |
-| `GET /discover` | 5 per minute (each call audits multiple skills) |
-| `GET /health`, `GET /benchmarks`, `GET /.well-known/auditskill-keys` | Unlimited |
+|---|---|
+| `POST /audit` | 10 / min per IP |
+| `POST /verify` | 60 / min |
+| `GET /certificate/{id}` | 60 / min |
+| `GET /certificates` | 30 / min |
+| `GET /discover` | 5 / min (each call audits many skills) |
+| `GET /health`, `/benchmarks`, `/.well-known/auditskill-keys` | unlimited |
+
+## Authentication
+
+None. AuditSkill is zero-auth — no key, no token, no signup. Call any endpoint directly.
+
+## Limitations
+
+- A `PASS` means "no red flags found," not "provably safe forever." Endpoints can change or go down after the audit; certificates carry a `valid_until`.
+- Liveness uses GET/HEAD only — it confirms a URL responds, never that a write endpoint works, and never sends POST/PUT/PATCH/DELETE.
+- It audits the SKILL.md document, not the running service behind it, and does not verify semantic correctness (that `GET /weather` truly returns weather).
+- Token counts are calibrated per-model heuristics (not a tokenizer); the honest error bar is in `error_margin_pct` (~10%).
+- Maximum input size is 200 KB.
 
 ## Author
 
-Built for the NANDA Town SkillMD track, NANDAHack 2026. Source: https://github.com/VladimirPutkov/auditskill (MIT License).
+Built for the NANDA Town SkillMD track, NANDAHack 2026. Source: https://github.com/VladimirPutkov/auditskill (MIT License). Contact: https://github.com/VladimirPutkov/auditskill/issues
