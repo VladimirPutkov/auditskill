@@ -95,7 +95,7 @@ Every audit includes a `context_cost` object with a **per-model** breakdown:
 
 Density is classified as `high`, `medium`, or `low` based on the ratio of useful signals (endpoints, examples, documented sections) to total tokens. Files above 3,000 tokens with low density are explicitly flagged.
 
-**Prices come from another skill in the same registry.** The dollar figures and context-window sizes are sourced live from the **API Pricing Look-Up** skill on NANDA Town — one registry skill enriching the audit of another. Prices refresh in the background (daily); a built-in fallback table keeps the feature working if that service is briefly down, and `price_source` always says which was used. Token counts are calibrated per model family (chars-per-token), honestly labelled with `error_margin_pct` — enough for a load/skip decision, with no heavyweight tokenizer dependency and no keys. Pass `model` to `/audit` to narrow the breakdown to your model; the answer is byte-identical for the same file and price snapshot.
+**Prices are self-contained.** The dollar figures and context-window sizes come from AuditSkill's own maintained price table that ships inside the service — no dependency on any third-party skill or external feed. A security auditor must not trust an unaudited outside source for the numbers it reports, so the table is the single source of truth; `price_source` records its as-of date. Estimates therefore stay strictly offline and deterministic. Token counts are calibrated per model family (chars-per-token), honestly labelled with `error_margin_pct` — enough for a load/skip decision, with no heavyweight tokenizer dependency and no keys. Pass `model` to `/audit` to narrow the breakdown to your model; the answer is byte-identical for the same file.
 
 ### Ranked discovery — the decision engine
 
@@ -122,7 +122,7 @@ No callback to AuditSkill required. The certificate is portable and stateless.
 
 ---
 
-## API Surface — 8 Endpoints, Zero Auth
+## API Surface — 9 Endpoints, Zero Auth
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -133,6 +133,7 @@ No callback to AuditSkill required. The certificate is portable and stateless.
 | `GET` | `/certificates?skill_hash=…` | Trust-registry lookup — "Was this exact skill audited before?" |
 | `GET` | `/.well-known/auditskill-keys` | Public keys for offline certificate verification. |
 | `GET` | `/health` | Liveness probe. |
+| `GET` | `/about` | Machine-readable manifest — purpose, the two problems solved, who it is for, when to use it. |
 | `GET` | `/benchmarks` | Scoring weights, thresholds, and rule categories (full transparency). |
 
 ---

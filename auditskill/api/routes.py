@@ -282,6 +282,65 @@ async def health() -> HealthResponse:
 
 
 # ---------------------------------------------------------------------------
+# GET /about
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/about",
+    summary="Machine-readable self-description",
+    description=(
+        "A compact manifest an agent can read to understand what AuditSkill "
+        "does, who it is for, the two problems it solves, and when to use it "
+        "— without loading the full SKILL.md."
+    ),
+)
+async def about() -> dict[str, Any]:
+    """Return an agent-facing description of the service and its purpose."""
+    return {
+        "service": "AuditSkill",
+        "version": "1.0.0",
+        "purpose": (
+            "Audit a third-party SKILL.md before it enters an agent's context "
+            "window: is it safe to load, and is it worth the tokens?"
+        ),
+        "for_whom": (
+            "Autonomous AI agents that discover and load skills at runtime and "
+            "cannot pause to ask a human to vet each one. A human can inspect a "
+            "skill by hand; an autonomous agent needs a machine it can call."
+        ),
+        "problems_solved": [
+            "Safety — a SKILL.md is instructions by design, so a malicious one "
+            "can inject, exfiltrate, or hijack the moment it is read. AuditSkill "
+            "checks it first, deterministically, without executing anything.",
+            "Context cost — every loaded SKILL.md spends tokens from the window. "
+            "AuditSkill estimates the token, dollar, and context-window cost so "
+            "the agent can decide whether loading it is worth the budget.",
+        ],
+        "how": (
+            "POST /audit one file, or GET /discover to scan the whole registry "
+            "ranked best-first. Deterministic, rule-based, no LLM, zero auth."
+        ),
+        "when_to_use": "Before loading any skill you did not write.",
+        "when_not_to_use": (
+            "It audits the SKILL.md document, not a running service or an "
+            "agent's runtime actions. It is not an identity, payment, or "
+            "reputation layer."
+        ),
+        "primary_endpoints": {
+            "audit": "POST /audit",
+            "discover": "GET /discover",
+            "verify": "POST /verify",
+            "benchmarks": "GET /benchmarks",
+        },
+        "self_contained": (
+            "All scoring, security rules, and price data ship inside the "
+            "service — no dependency on any third-party skill or external feed."
+        ),
+        "source": "https://github.com/VladimirPutkov/auditskill",
+    }
+
+
+# ---------------------------------------------------------------------------
 # GET /discover
 # ---------------------------------------------------------------------------
 

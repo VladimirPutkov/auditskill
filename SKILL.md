@@ -5,9 +5,9 @@ description: Audit any SKILL.md before it enters your context window. One HTTP c
 
 # AuditSkill
 
-AuditSkill tells an agent whether a third-party SKILL.md is safe to load and worth the tokens — before its text becomes part of your instructions. Send the skill file (or its URL); get back a deterministic verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. No API key, no signup.
+AuditSkill audits a third-party SKILL.md before its text becomes part of your instructions, and answers two questions in one call: **is it safe to load, and is it worth the tokens?** Send the skill file (or its URL); get back a deterministic verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. No API key, no signup.
 
-Discovery answers "what skills exist." AuditSkill answers the next question: **should I actually use this one?** Find -> Verify -> Load.
+Built for **autonomous agents**, not humans. A person can open a skill and judge it by hand; an agent that discovers and loads skills at runtime cannot pause to ask. That is the gap AuditSkill fills — a machine an agent can call to vet a skill before trusting it. Discovery answers "what skills exist"; AuditSkill answers "should I actually use this one?" Find -> Verify -> Load.
 
 ## Base URL
 
@@ -25,7 +25,7 @@ The problem it solves: a SKILL.md is *instructions by design*, so a malicious on
 
 ## Endpoints
 
-Eight endpoints. The two you will use most are `POST /audit` (check one file) and `GET /discover` (check the whole registry, ranked).
+Nine endpoints. The two you will use most are `POST /audit` (check one file) and `GET /discover` (check the whole registry, ranked). For a one-call summary of what this service is and when to use it, call `GET /about`.
 
 ### POST /audit
 
@@ -179,6 +179,14 @@ curl https://auditskill.up.railway.app/health
 { "status": "ok", "version": "1.0.0", "service": "auditskill" }
 ```
 
+### GET /about
+
+A compact machine-readable manifest: what the service does, who it is for, the two problems it solves, and when to use it — so an agent can understand the service without loading the full SKILL.md.
+
+```bash
+curl https://auditskill.up.railway.app/about
+```
+
 ### GET /benchmarks
 
 The scoring weights, verdict thresholds, security categories with rule counts, the `/discover` ranking formula, and the list of priced models — so you can inspect exactly how any score, rank, or cost was computed.
@@ -195,7 +203,7 @@ Every `/audit` response has these top-level fields:
 - `overall_score` — 0-100, weighted across modules (`structure` 0.30, `security` 0.30, `liveness` 0.25, `metadata` 0.10, `scope` 0.05; weights renormalize over the modules that actually ran).
 - `security` — `{ score, risk_level, rules_checked, rules_triggered, findings[] }`. Each finding has `rule_id`, `severity` (`critical`/`high`/`medium`/`low`), `category`, `detail`, and a 1-based `line`.
 - `structure`, `scope`, `metadata`, `liveness` — per-module sub-reports, each with a `score` and its own flags/findings. In `safe_static` mode `liveness.score` is `null`.
-- `context_cost` — `tokens_estimate`, `size_bytes`, `density` (`high`/`medium`/`low`), a plain-language `recommendation`, `error_margin_pct`, `price_source`, and `per_model[]`. Each `per_model` entry gives `tokens`, `input_cost_usd`, and `window_pct` (share of that model's context window). Dollar prices are sourced live from the API Pricing Look-Up skill in the same registry, with a built-in fallback; `price_source` always says which was used.
+- `context_cost` — `tokens_estimate`, `size_bytes`, `density` (`high`/`medium`/`low`), a plain-language `recommendation`, `error_margin_pct`, `price_source`, and `per_model[]`. Each `per_model` entry gives `tokens`, `input_cost_usd`, and `window_pct` (share of that model's context window). Prices come from AuditSkill's own maintained table — self-contained, no external feed — so estimates stay offline and deterministic; `price_source` records the table's as-of date.
 - `skill_name`, `skill_hash` (`sha256:...`), `audit_id`, `mode`, `cached`, `tested_at`.
 - `issues[]` — a flat, severity-tagged list surfacing the most important findings across modules.
 - `certificate` / `certificate_id` — the signed verdict (see "Certificates").
@@ -269,6 +277,8 @@ None. AuditSkill is zero-auth — no key, no token, no signup. Call any endpoint
 - A `PASS` means "no red flags found," not "provably safe forever." Endpoints can change or go down after the audit; certificates carry a `valid_until`.
 - Liveness uses GET/HEAD only — it confirms a URL responds, never that a write endpoint works, and never sends POST/PUT/PATCH/DELETE.
 - It audits the SKILL.md document, not the running service behind it, and does not verify semantic correctness (that `GET /weather` truly returns weather).
+- It is a pre-load document auditor — it runs before you load a skill, not while your agent acts. It is not a runtime firewall, an identity registry, or a payment layer.
+- It is self-contained: all scoring, security rules, and price data ship inside the service, with no dependency on any third-party skill or external feed.
 - Token counts are calibrated per-model heuristics (not a tokenizer); the honest error bar is in `error_margin_pct` (~10%).
 - Maximum input size is 200 KB.
 

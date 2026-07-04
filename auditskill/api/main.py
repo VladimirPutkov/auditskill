@@ -6,8 +6,6 @@ CORS middleware, SlowAPI rate-limit handling, and the main API router.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import os
 import uvicorn
 from contextlib import asynccontextmanager
@@ -20,7 +18,6 @@ from slowapi.errors import RateLimitExceeded
 
 from auditskill.api.rate_limiter import limiter
 from auditskill.api.routes import router
-from auditskill.core.pricing import price_cache
 from auditskill.db.store import AuditStore
 
 store = AuditStore()
@@ -28,16 +25,14 @@ store = AuditStore()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage the application lifecycle — database + background price refresh."""
+    """Manage the application lifecycle — database setup and teardown.
+
+    Model prices are a self-contained in-memory table (see
+    ``auditskill.core.pricing``); there is no background refresh to start.
+    """
     await store.initialize()
     app.state.store = store
-    # Refresh model prices in the background (startup, then daily).  Audits
-    # never wait on this — they read the in-memory snapshot only.
-    price_task = asyncio.create_task(price_cache.refresh_loop())
     yield
-    price_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await price_task
     await store.close()
 
 

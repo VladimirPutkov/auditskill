@@ -4,16 +4,17 @@ Answers the question at the heart of skill selection: *what does loading
 this SKILL.md actually cost on my model — in tokens, in dollars, and as a
 share of my context window?*
 
-Prices come from the **API Pricing Look-Up** skill in the same NANDA Town
-registry (one registry skill enriching the audit of another).  A built-in
-fallback table guarantees the feature works even when that service is down.
+Prices are maintained inside AuditSkill itself — a self-contained table with
+no dependency on any third-party skill or external feed.  A security auditor
+must not trust an unaudited outside source for the numbers it reports, so the
+price table ships with the service and is the single source of truth.
 
 Design invariants:
 
-- **No audit request ever waits on the network for prices.**  Estimates
-  read an in-memory snapshot only.  The snapshot is refreshed by a
-  background task (on startup, then every 24 h) through the SSRF-safe
-  client.  ``safe_static`` mode therefore stays strictly offline.
+- **No audit request ever waits on the network for prices.**  Estimates read
+  the in-memory table only — there is no background fetch and no outside
+  call, so every mode (including ``safe_static``) is strictly offline and
+  fully deterministic.
 - **Deterministic.**  Given the same text and the same price snapshot,
   the output is byte-identical.  Token counts are calibrated heuristics
   (chars-per-token per model family), not tokenizer calls — the agent is
@@ -23,25 +24,13 @@ Design invariants:
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from dataclasses import dataclass
 
 from auditskill.api.models import PerModelCost
 
-logger = logging.getLogger(__name__)
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-
-#: The registry skill we source live prices from (GET, SSRF-guarded).
-PRICING_SKILL_URL = (
-    "https://pricing-scraper-production-cd54.up.railway.app/pricing/models"
-)
-
-_REFRESH_INTERVAL_S = 24 * 60 * 60  # daily — the source itself scrapes daily
-_INITIAL_RETRY_S = 15 * 60          # retry sooner if the first refresh fails
 
 #: Calibrated chars-per-token ratios for the ASCII portion of a document.
 #: Non-ASCII characters are counted ~1 token each (see auditor heuristic).
@@ -66,14 +55,14 @@ class ModelPrice:
     context_window_k: int
 
 
-# Built-in fallback: live snapshot of the API Pricing Look-Up skill taken
-# 2026-07-03.  Used until the first successful background refresh, and kept
-# whenever a refresh fails — prices may age, never disappear.
-_FALLBACK_AS_OF = "2026-07-03"
+# AuditSkill's own maintained price table: input $/1k tokens and context
+# window (in thousands of tokens).  Self-contained — no external feed.
+# Hand-verified as_of the date below; update this table when prices change.
+_FALLBACK_AS_OF = "2026-07-04"
 _FALLBACK_PRICES: dict[str, ModelPrice] = {
     "claude-fable-5": ModelPrice("claude-fable-5", "claude", 0.01, 1000),
     "claude-opus-4-8": ModelPrice("claude-opus-4-8", "claude", 0.005, 1000),
-    "claude-sonnet-4-6": ModelPrice("claude-sonnet-4-6", "claude", 0.003, 1000),
+    "claude-sonnet-5": ModelPrice("claude-sonnet-5", "claude", 0.003, 1000),
     "claude-haiku-4-5": ModelPrice("claude-haiku-4-5", "claude", 0.001, 200),
     "gemini-3": ModelPrice("gemini-3", "gemini", 0.014, 1000),
     "meta-llama/Llama-3.3-70B-Instruct-Turbo": ModelPrice(
@@ -81,97 +70,42 @@ _FALLBACK_PRICES: dict[str, ModelPrice] = {
     ),
 }
 
-#: Models we report on.  The live refresh updates prices/windows for these
-#: IDs when the pricing skill knows them; it never adds or removes entries,
-#: so the response shape stays stable and curated.
+#: Models we report on.  A curated, self-contained set — the response shape
+#: stays stable and never depends on an outside service.
 TRACKED_MODELS: tuple[str, ...] = tuple(sorted(_FALLBACK_PRICES))
 
 
 # ---------------------------------------------------------------------------
-# Price cache (in-memory snapshot + background refresh)
+# Price table (in-memory, self-contained — no background refresh)
 # ---------------------------------------------------------------------------
 
 
 class PriceCache:
-    """In-memory price snapshot.  Reads are synchronous and never block."""
+    """In-memory price table.  Reads are synchronous and never block.
+
+    The table is self-contained (see :data:`_FALLBACK_PRICES`).  There is no
+    background refresh and no outside call — AuditSkill is its own source of
+    truth for prices, which keeps every audit offline and deterministic and
+    means a security auditor never trusts an unaudited third party for the
+    numbers it reports.
+    """
 
     def __init__(self) -> None:
         self._prices: dict[str, ModelPrice] = dict(_FALLBACK_PRICES)
-        self._source: str = f"built-in table (as_of {_FALLBACK_AS_OF})"
-
-    # -- read side (hot path) -------------------------------------------
+        self._source: str = f"AuditSkill built-in price table (as_of {_FALLBACK_AS_OF})"
 
     @property
     def prices(self) -> dict[str, ModelPrice]:
-        """Return the current snapshot (shallow copy — entries are frozen)."""
+        """Return the current table (shallow copy — entries are frozen)."""
         return dict(self._prices)
 
     @property
     def source(self) -> str:
-        """Human-readable provenance string for the current snapshot."""
+        """Human-readable provenance string for the price table."""
         return self._source
 
-    # -- write side (background task only) ------------------------------
 
-    async def refresh(self) -> bool:
-        """Fetch live prices via the SSRF-safe client; keep old data on failure.
-
-        Returns ``True`` when the snapshot was updated from the live feed.
-        Never raises.
-        """
-        # Imported here so this module stays stdlib-importable in harnesses.
-        from auditskill.core.ssrf_guard import safe_request
-
-        try:
-            resp = await safe_request("GET", PRICING_SKILL_URL)
-            payload = resp.json()
-            models = payload.get("all_models", [])
-            as_of = str(payload.get("as_of") or payload.get("scraped_at") or "?")[:10]
-            if not isinstance(models, list) or not models:
-                raise ValueError("pricing feed returned no models")
-
-            updated = dict(self._prices)
-            hits = 0
-            for entry in models:
-                mid = entry.get("model")
-                if mid not in updated:
-                    continue  # curated set only — never grow the response
-                price = entry.get("input_per_1k_usd")
-                window = entry.get("context_window_k")
-                if not isinstance(price, (int, float)) or price < 0:
-                    continue
-                if not isinstance(window, (int, float)) or window <= 0:
-                    continue
-                updated[mid] = ModelPrice(
-                    model=mid,
-                    family=updated[mid].family,
-                    input_per_1k_usd=float(price),
-                    context_window_k=int(window),
-                )
-                hits += 1
-
-            if hits == 0:
-                raise ValueError("pricing feed had no tracked models")
-
-            self._prices = updated
-            self._source = f"API Pricing Look-Up (NANDA Town), as_of {as_of}"
-            logger.info("Price cache refreshed: %d tracked models (as_of %s)", hits, as_of)
-            return True
-        except Exception as exc:  # noqa: BLE001 — degrade, never break audits
-            logger.warning("Price refresh failed (keeping previous snapshot): %s", exc)
-            return False
-
-    async def refresh_loop(self) -> None:
-        """Background loop: refresh now, then daily.  Cancelled on shutdown."""
-        while True:
-            ok = await self.refresh()
-            try:
-                await asyncio.sleep(_REFRESH_INTERVAL_S if ok else _INITIAL_RETRY_S)
-            except asyncio.CancelledError:
-                raise
-
-
-#: Process-wide singleton, wired into the app lifespan in ``api.main``.
+#: Process-wide singleton.
 price_cache = PriceCache()
 
 
