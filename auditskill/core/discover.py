@@ -130,7 +130,7 @@ async def _audit_entry(
 
 def _composite(r: DiscoverResult) -> int:
     density = (r.context_cost or {}).get("density")
-    return (r.score or 0) + DENSITY_BONUS.get(density, 0)
+    return (r.score or 0) + DENSITY_BONUS.get(str(density or ""), 0)
 
 
 def rank_results(results: list[DiscoverResult]) -> list[DiscoverResult]:
@@ -156,7 +156,7 @@ def rank_results(results: list[DiscoverResult]) -> list[DiscoverResult]:
 
     for r in passing:
         density = (r.context_cost or {}).get("density")
-        bonus = DENSITY_BONUS.get(density, 0)
+        bonus = DENSITY_BONUS.get(str(density or ""), 0)
         r.rank_reason = (
             f"composite {_composite(r)} = score {r.score} "
             f"+ density bonus {bonus:+d} ({density or 'unknown'})"
@@ -200,10 +200,23 @@ async def discover(
             "also probe each skill's endpoints."
         )
 
+    if not registry_url.startswith("https://"):
+        raise ValueError(
+            "registry_url must use HTTPS (start with 'https://'). "
+            "Fix: omit registry_url to scan the default NANDA Town registry."
+        )
+
     limit = max(1, min(limit, _MAX_ENTRIES))
 
     resp = await safe_request("GET", registry_url)
-    payload = resp.json()
+    try:
+        payload = resp.json()
+    except Exception as exc:  # noqa: BLE001 — registry served non-JSON
+        raise ValueError(
+            f"Registry at {registry_url} did not return JSON "
+            f"({type(exc).__name__}). Fix: point registry_url at a "
+            "NANDA-style JSON registry endpoint."
+        ) from exc
     skills: list[dict[str, Any]] = (
         payload.get("skills", []) if isinstance(payload, dict) else []
     )

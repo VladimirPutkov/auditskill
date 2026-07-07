@@ -19,7 +19,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-from typing import TYPE_CHECKING
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from auditskill.api.models import SecurityFinding, SecurityReport
@@ -28,9 +28,6 @@ from auditskill.rules.suspicious_patterns import (
     check_method_mismatch,
     check_url_suspicion,
 )
-
-if TYPE_CHECKING:
-    from auditskill.rules.security_rules import SecurityRule
 
 # ---------------------------------------------------------------------------
 # URL extraction pattern – intentionally broad to catch http, https, and
@@ -229,7 +226,7 @@ def _url_rule_id(reason: str) -> str:
 
 
 # Suspicion-reason → finding severity mapping (matched by keyword).
-def _url_severity(reason: str) -> str:
+def _url_severity(reason: str) -> Literal["critical", "high", "medium", "low"]:
     """Map a human-readable URL suspicion reason to a severity level."""
     r = reason.lower()
     if "bare ip" in r or "ip address" in r:
@@ -248,7 +245,7 @@ def _url_severity(reason: str) -> str:
 
 def scan(
     raw_text: str,
-    endpoints: list[dict[str, str]] | None = None,
+    endpoints: list[Any] | None = None,
     description: str | None = None,
     base_url: str | None = None,
 ) -> SecurityReport:
@@ -256,9 +253,9 @@ def scan(
 
     Args:
         raw_text: Full text of a ``SKILL.md`` file.
-        endpoints: Optional list of endpoint dicts (used for mismatch
-            detection).  Each dict is expected to carry at least ``method``
-            and ``path`` keys.
+        endpoints: Optional list of endpoints (used for mismatch
+            detection).  Each entry is a dict or model carrying at least
+            ``method`` and ``path``.
         description: Optional human-readable description of the skill,
             used together with *endpoints* for mismatch detection.
         base_url: Optional declared Base URL.  When given, endpoint
@@ -301,16 +298,12 @@ def scan(
                 # or homoglyph-disguised injection is still caught.
                 candidates = {stripped, _normalize_for_matching(stripped)}
             else:
-                # Hidden-instruction rules (zero-width, bidi, homoglyph, HTML
-                # comments) are dangerous regardless of context — scan raw.
-                # However, descriptive-section suppression still applies to
-                # categories that routinely appear in documentation prose
-                # (e.g. payment_safety described under "How this works").
-                if (
-                    rule.category in _DESCRIPTIVE_SKIP_CATEGORIES
-                    and idx in descriptive_lines
-                ):
-                    continue
+                # Code-block-UNSAFE rules (zero-width, bidi, homoglyphs,
+                # supply-chain installs, proxy rewrites, daemons, credential
+                # hand-off) are dangerous regardless of surrounding prose, so
+                # descriptive-section suppression does NOT apply — otherwise
+                # an attacker could hide `export HTTP_PROXY=…` or a
+                # set-api-key instruction under a "How it works" heading.
                 candidates = {line}
 
             if any(compiled.search(c) for c in candidates):
@@ -493,7 +486,7 @@ def _calculate_score(findings: list[SecurityFinding]) -> int:
     return max(0, min(100, score))
 
 
-def _score_to_risk_level(score: int) -> str:
+def _score_to_risk_level(score: int) -> Literal["none", "low", "medium", "high", "critical"]:
     """Map a numeric score to a categorical risk level string.
 
     Returns:

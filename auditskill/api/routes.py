@@ -26,6 +26,7 @@ from auditskill.api.models import (
     AuditResponse,
     ErrorResponse,
     HealthResponse,
+    KeyInfo,
     KeysResponse,
     VerifyRequest,
     VerifyResponse,
@@ -141,14 +142,18 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
 
         certificate: dict[str, Any] = body.certificate
 
+        # Echo fields are attacker-supplied — coerce them so a malformed
+        # certificate yields {valid: false}, never a 500.
+        cert_id = str(certificate.get("certificate_id", "") or "")
+        verdict = str(certificate.get("verdict", "") or "")
+        raw_score = certificate.get("score")
+        score = raw_score if isinstance(raw_score, int) else None
+
         # Extract and clean the signature value -------------------------
         raw_signature = certificate.get("signature", "")
         if not raw_signature:
             return VerifyResponse(
-                valid=False,
-                certificate_id=certificate.get("certificate_id", ""),
-                verdict=certificate.get("verdict", ""),
-                score=certificate.get("score"),
+                valid=False, certificate_id=cert_id, verdict=verdict, score=score
             )
 
         # Pass the FULL certificate (signature included): verify_certificate
@@ -157,10 +162,7 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
         valid = verify_certificate(certificate, public_key_b64)
 
         return VerifyResponse(
-            valid=valid,
-            certificate_id=certificate.get("certificate_id", ""),
-            verdict=certificate.get("verdict", ""),
-            score=certificate.get("score"),
+            valid=valid, certificate_id=cert_id, verdict=verdict, score=score
         )
 
     except HTTPException:
@@ -256,12 +258,12 @@ async def well_known_keys() -> KeysResponse:
 
     return KeysResponse(
         keys=[
-            {
-                "key_id": key_id,
-                "algorithm": "ed25519",
-                "public_key": public_key_b64,
-                "created_at": created_at,
-            }
+            KeyInfo(
+                key_id=key_id,
+                algorithm="ed25519",
+                public_key=public_key_b64,
+                created_at=created_at,
+            )
         ],
     )
 
@@ -373,6 +375,13 @@ async def discover_skills(
             q=q, mode=mode, limit=limit, registry_url=registry_url, store=store
         )
         return result.model_dump(mode="json")
+    except SSRFBlockedError as exc:
+        # A blocked registry URL is a bad *request*, not a server fault.
+        logger.warning("Discovery blocked by SSRF guard: %s", exc)
+        raise HTTPException(
+            status_code=422,
+            detail=f"registry_url was blocked by the SSRF guard: {exc.reason}",
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:

@@ -95,7 +95,9 @@ def create_certificate(
         skill_hash: ``sha256:<hex>`` content hash of the raw SKILL.md text.
         mode: Audit mode (``'safe_static'`` or ``'liveness'``).
         overall_score: Aggregated score in [0, 100].
-        verdict: ``'certified'``, ``'provisional'``, or ``'rejected'``.
+        verdict: One of the four audit verdicts (``PASS_BASIC_AUDIT``,
+            ``PASS_WITH_WARNINGS``, ``REQUIRES_HUMAN_REVIEW``,
+            ``FAILS_BASIC_AUDIT``).
         structure_score: Score from the structure analysis module.
         liveness_score: Score from endpoint testing (``None`` if not tested).
         security_score: Score from the security scanner module.
@@ -175,7 +177,7 @@ def verify_certificate(certificate: dict[str, Any], public_key_b64: str) -> bool
         ``True`` if the signature is valid, ``False`` otherwise.
     """
     sig_raw = certificate.get("signature", "")
-    if not sig_raw.startswith("ed25519:"):
+    if not isinstance(sig_raw, str) or not sig_raw.startswith("ed25519:"):
         logger.warning("Certificate signature is not ed25519-prefixed: %s", sig_raw)
         return False
 

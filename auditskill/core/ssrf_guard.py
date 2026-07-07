@@ -101,9 +101,18 @@ _BLOCKED_IPV4_NETWORKS = [
 ]
 _BLOCKED_IPV6_NETWORKS = [
     ipaddress.IPv6Network("::1/128"),            # loopback
+    ipaddress.IPv6Network("::/128"),             # unspecified
     ipaddress.IPv6Network("fc00::/7"),           # unique local
     ipaddress.IPv6Network("fe80::/10"),          # link-local
+    ipaddress.IPv6Network("64:ff9b::/96"),       # NAT64 (embeds IPv4)
+    ipaddress.IPv6Network("2001::/32"),          # Teredo (embeds IPv4)
 ]
+
+# Ports we will connect to: standard web ports, plus the unprivileged range
+# (dev servers, alt-HTTP).  Privileged non-web ports (22/SSH, 25/SMTP,
+# 6379-via-<1024 etc.) are refused so the service cannot be used to poke
+# arbitrary infrastructure services.
+_ALLOWED_LOW_PORTS = frozenset({80, 443})
 
 # Hard limits
 _TIMEOUT_SECONDS = 3.0
@@ -126,6 +135,7 @@ async def check_url(url: str) -> SSRFCheckResult:
     try:
         parsed = urlparse(url)
         _validate_scheme(parsed.scheme, url)
+        _validate_port(parsed, url)
         hostname = _extract_hostname(parsed, url)
         _check_blocked_hostname(hostname, url)
         # DNS resolution is blocking; run it in a worker thread so it does not
@@ -218,6 +228,21 @@ def _validate_scheme(scheme: str, url: str) -> None:
         raise SSRFBlockedError(f"Scheme {scheme!r} is not allowed", url)
 
 
+def _validate_port(parsed: Any, url: str) -> None:
+    """Raise if the URL targets a privileged non-web port (SSH, SMTP, …)."""
+    try:
+        port = parsed.port  # None when no explicit port in the URL
+    except ValueError as exc:  # non-numeric / out-of-range port literal
+        raise SSRFBlockedError(f"Invalid port in URL: {exc}", url) from exc
+    if port is None:
+        return
+    if port < 1024 and port not in _ALLOWED_LOW_PORTS:
+        raise SSRFBlockedError(
+            f"Port {port} is not allowed (only 80, 443, and unprivileged ports)",
+            url,
+        )
+
+
 def _extract_hostname(parsed: Any, url: str) -> str:
     """Extract and validate the hostname from a parsed URL."""
     hostname = parsed.hostname
@@ -261,7 +286,7 @@ def _resolve_and_check(hostname: str, url: str) -> str:
     first_safe_ip: str | None = None
 
     for family, _type, _proto, _canonname, sockaddr in addr_infos:
-        ip_str = sockaddr[0]
+        ip_str = str(sockaddr[0])
         try:
             ip_obj = ipaddress.ip_address(ip_str)
         except ValueError as exc:
@@ -380,16 +405,30 @@ async def _pinned_request(
         follow_redirects=False,  # we handle redirects ourselves
         max_redirects=0,
     ) as client:
-        response = await client.request(method.upper(), url, **kwargs)
+        # Stream the body and abort as soon as the cap is exceeded, so a
+        # hostile server cannot make us buffer an unbounded response in
+        # memory before a size check.
+        request = client.build_request(method.upper(), url, **kwargs)
+        response = await client.send(request, stream=True)
+        try:
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > _MAX_RESPONSE_BYTES:
+                    raise SSRFBlockedError(
+                        f"Response body too large: {total} bytes "
+                        f"(max {_MAX_RESPONSE_BYTES})",
+                        url,
+                    )
+                chunks.append(chunk)
+        finally:
+            await response.aclose()
 
-        # Post-hoc size check — 256 KiB is too small to OOM, but we
-        # still enforce the limit for consistency.
-        body_len = len(response.content)
-        if body_len > _MAX_RESPONSE_BYTES:
-            raise SSRFBlockedError(
-                f"Response body too large: {body_len} bytes "
-                f"(max {_MAX_RESPONSE_BYTES})",
-                url,
-            )
-
-    return response
+    return httpx.Response(
+        status_code=response.status_code,
+        headers=response.headers,
+        content=b"".join(chunks),
+        request=request,
+        extensions=response.extensions,
+    )

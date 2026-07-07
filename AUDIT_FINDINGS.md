@@ -1,5 +1,11 @@
 # AUDIT_FINDINGS — first-principles audit, 2026-07-04
 
+> **Status update, 2026-07-07:** all "Flagged for you" items below are resolved —
+> (1) live `/benchmarks` now lists `claude-sonnet-5` (verified live this session; OpenAI
+> models added locally, deploy pending); (2) `SKILL.md.bak-20260704` no longer exists in
+> the repo; (3) live self-audit of the SKILL.md example against `/audit` reproduces the
+> documented response exactly; (6) `pytest -q` → 109 passed. Kept for the audit record.
+
 Scope: SKILL.md, README.md, source code, and the live service at auditskill.up.railway.app. Everything below was checked against the code (authoritative file reads) and live GET responses this session.
 
 ## Verified true

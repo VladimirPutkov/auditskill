@@ -35,3 +35,6 @@ htmlcov/
 
 # Secrets (never commit)
 .env
+
+# Session review docs (local only — do not publish)
+code-review/

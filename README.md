@@ -1,5 +1,9 @@
 # AuditSkill
 
+[![tests](https://github.com/VladimirPutkov/auditskill/actions/workflows/test.yml/badge.svg)](https://github.com/VladimirPutkov/auditskill/actions/workflows/test.yml)
+[![live](https://img.shields.io/badge/live-auditskill.up.railway.app-brightgreen)](https://auditskill.up.railway.app/health)
+[![license](https://img.shields.io/badge/license-MIT-blue)](#license)
+
 **A zero-auth HTTP API that helps an agent find, verify, and safely load the right skill — before any of it enters the context window.**
 
 NANDA solves discovery. AuditSkill solves the next question: **"Which of these skills should I actually use — is it safe, and is it worth the cost?"**
@@ -97,7 +101,7 @@ Every audit includes a `context_cost` object with a **per-model** breakdown:
 
 Density is classified as `high`, `medium`, or `low` based on the ratio of useful signals (endpoints, examples, documented sections) to total tokens. Files above 3,000 tokens with low density are explicitly flagged.
 
-**Prices are self-contained.** The dollar figures and context-window sizes come from AuditSkill's own maintained price table that ships inside the service — no dependency on any third-party skill or external feed. A security auditor must not trust an unaudited outside source for the numbers it reports, so the table is the single source of truth; `price_source` records its as-of date. Estimates therefore stay strictly offline and deterministic. Token counts are calibrated per model family (chars-per-token), honestly labelled with `error_margin_pct` — enough for a load/skip decision, with no heavyweight tokenizer dependency and no keys. Pass `model` to `/audit` to narrow the breakdown to your model; the answer is byte-identical for the same file.
+**Prices are self-contained.** Nine models are tracked across four families (Claude, OpenAI, Gemini, Llama — the full list is at `/benchmarks`). The dollar figures and context-window sizes come from AuditSkill's own maintained price table that ships inside the service — no dependency on any third-party skill or external feed. A security auditor must not trust an unaudited outside source for the numbers it reports, so the table is the single source of truth; `price_source` records its as-of date. Estimates therefore stay strictly offline and deterministic. Token counts are calibrated per model family (chars-per-token), honestly labelled with `error_margin_pct` — enough for a load/skip decision, with no heavyweight tokenizer dependency and no keys. Pass `model` to `/audit` to narrow the breakdown to your model; the answer is byte-identical for the same file.
 
 ### Ranked discovery — the decision engine
 

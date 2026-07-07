@@ -1,5 +1,10 @@
 # DEPLOY — AuditSkill → GitHub + Railway
 
+> **Статус на 7 июля 2026:** Шаги 1–5 выполнены — репозиторий опубликован, сервис живёт на
+> `https://auditskill.up.railway.app` (healthcheck зелёный), URL в доках реальный.
+> Актуальные цифры: **9 endpoints**, **109 tests passed**. Осталось: пуш локальных правок
+> (redeploy подхватит их автоматически) и Шаг 6 — сабмишен в реестр.
+
 > Проверено 2 июля 2026. Все файлы готовы, секретов в репозитории нет, `.gitignore` корректен.
 > Шаги ниже выполняешь **ты** — регистрация GitHub, push и авторизация Railway требуют твоих учётных данных (я это сделать за тебя не могу).
 > Команды запускай в папке `C:\Users\putko\Desktop\NANDAHACK Audit\auditskill` (там лежат `pyproject.toml` и `Dockerfile` — это корень репозитория).
@@ -8,7 +13,7 @@
 
 ## Готовность (что я проверил статически)
 
-- ✅ 8 endpoints, `/discover` подключён, сигнатура совпадает с `core/discover.py`
+- ✅ 9 endpoints, `/discover` подключён, сигнатура совпадает с `core/discover.py`
 - ✅ `ContextCost` + `context_cost` в моделях и аудиторе
 - ✅ `Dockerfile` биндит `$PORT`; `railway.toml` с healthcheck `/health`
 - ✅ `.gitignore` исключает `.env`, `__pycache__`, `data/*.db`

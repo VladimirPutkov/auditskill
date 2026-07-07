@@ -360,8 +360,8 @@ class ContextCost(BaseModel):
     price_source: str | None = Field(
         default=None,
         description=(
-            "Where prices came from: the live API Pricing Look-Up skill "
-            "(NANDA Town) or the built-in fallback table, with as_of date."
+            "Provenance of the price figures: AuditSkill's built-in, "
+            "self-contained price table, with its as_of date."
         ),
     )
 

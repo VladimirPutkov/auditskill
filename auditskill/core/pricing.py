@@ -38,6 +38,7 @@ _FAMILY_RATIOS: dict[str, float] = {
     "claude": 3.8,
     "gemini": 4.2,
     "llama": 4.0,
+    "openai": 3.7,
 }
 _DEFAULT_RATIO = 4.0
 
@@ -65,6 +66,9 @@ _FALLBACK_PRICES: dict[str, ModelPrice] = {
     "claude-sonnet-5": ModelPrice("claude-sonnet-5", "claude", 0.003, 1000),
     "claude-haiku-4-5": ModelPrice("claude-haiku-4-5", "claude", 0.001, 200),
     "gemini-3": ModelPrice("gemini-3", "gemini", 0.014, 1000),
+    "gpt-4o": ModelPrice("gpt-4o", "openai", 0.0025, 128),
+    "gpt-4o-mini": ModelPrice("gpt-4o-mini", "openai", 0.00015, 128),
+    "o3": ModelPrice("o3", "openai", 0.01, 200),
     "meta-llama/Llama-3.3-70B-Instruct-Turbo": ModelPrice(
         "meta-llama/Llama-3.3-70B-Instruct-Turbo", "llama", 0.00088, 128
     ),

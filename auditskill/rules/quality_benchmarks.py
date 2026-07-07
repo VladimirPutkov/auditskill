@@ -75,7 +75,7 @@ VERDICT_PASS: str = "PASS_BASIC_AUDIT"
 # ---------------------------------------------------------------------------
 
 
-def calculate_structure_score(parsed: dict[str, Any]) -> int:
+def calculate_structure_score(parsed: Any) -> int:
     """Compute a structure sub-score (0–100) for a parsed SKILL.md.
 
     The score starts at 100 and is decremented by the penalty for each
@@ -83,9 +83,9 @@ def calculate_structure_score(parsed: dict[str, Any]) -> int:
     boolean flag in *parsed* is falsy).
 
     Args:
-        parsed: A dict with boolean keys matching the ``field_name``
-            values in :data:`REQUIRED_SECTIONS` and
-            :data:`RECOMMENDED_SECTIONS`.
+        parsed: A dict or Pydantic model with boolean keys/attributes
+            matching the ``field_name`` values in
+            :data:`REQUIRED_SECTIONS` and :data:`RECOMMENDED_SECTIONS`.
 
     Returns:
         An integer score clamped to ``[0, 100]``.

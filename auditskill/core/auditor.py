@@ -15,7 +15,7 @@ import asyncio
 import logging
 import secrets
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from auditskill.api.models import (
     AuditResponse,
@@ -119,7 +119,7 @@ def _build_structure_report(parsed: ParsedSkill) -> StructureReport:
     return report
 
 
-def _severity_from_score(score: int | None) -> str:
+def _severity_from_score(score: int | None) -> Literal["high", "medium", "low", "info"]:
     """Infer an issue severity from a 0-100 module score."""
     if score is None:
         return "info"

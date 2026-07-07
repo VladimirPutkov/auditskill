@@ -171,7 +171,7 @@ def _calculate_score(
     missing_sections: list[str],
     breadth: str,
     parsed: ParsedSkill,
-) -> float:
+) -> int:
     """Compute a 0-100 quality score.
 
     Penalties

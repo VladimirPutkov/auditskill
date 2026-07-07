@@ -9,12 +9,13 @@ from __future__ import annotations
 import os
 import uvicorn
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, cast
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.types import ExceptionHandler
 
 from auditskill.api.rate_limiter import limiter
 from auditskill.api.routes import router
@@ -48,7 +49,11 @@ app = FastAPI(
 
 # --- Rate-limit support via SlowAPI ---
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# slowapi's handler is typed narrowly (RateLimitExceeded, not Exception);
+# it is only ever invoked for that exception class, so the cast is safe.
+app.add_exception_handler(
+    RateLimitExceeded, cast(ExceptionHandler, _rate_limit_exceeded_handler)
+)
 
 # --- CORS ---
 app.add_middleware(

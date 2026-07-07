@@ -4,7 +4,7 @@
 > Fixes confirmed by `pytest -q` → 33/33 passed (2 July 2026 22:59 ET).
 >
 > This file is retained as documentation of the audit process.
-> For current status, see GAP_ANALYSIS.md.
+> For current status, see AUDIT_FINDINGS.md.
 
 ---
 
