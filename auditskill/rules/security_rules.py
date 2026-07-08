@@ -469,11 +469,11 @@ _SUPPLY_CHAIN_RULES: list[SecurityRule] = [
         rule_id="SEC-027",
         category="supply_chain",
         severity="critical",
-        pattern=r"(curl|wget)\s+[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?)\b",
+        pattern=r"(curl|wget)\s+[^\n|]*\|\s*(sudo\s+)?(sh|bash|zsh|python3?|powershell|pwsh|iex)\b",
         description=(
             "Detects pipe-to-shell installation (curl/wget piped into a "
-            "shell or Python interpreter) — remote code executed without "
-            "inspection or checksum verification."
+            "shell, Python, or PowerShell interpreter) — remote code "
+            "executed without inspection or checksum verification."
         ),
         is_code_block_safe=False,
     ),

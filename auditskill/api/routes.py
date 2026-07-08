@@ -33,7 +33,7 @@ from auditskill.api.models import (
 )
 from auditskill.core import pricing
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
-from auditskill.core.certifier import verify_certificate
+from auditskill.core.certifier import get_public_key, verify_certificate
 from auditskill.core.discover import DENSITY_BONUS, discover
 from auditskill.core.ssrf_guard import SSRFBlockedError
 from auditskill.rules.quality_benchmarks import SCORING_WEIGHTS
@@ -133,11 +133,14 @@ async def audit_skill(request: Request, body: AuditRequest) -> AuditResponse:
 async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
     """Verify the Ed25519 signature embedded in a certificate."""
     try:
-        public_key_b64 = os.environ.get("AUDITSKILL_PUBLIC_KEY", "")
+        public_key_b64 = get_public_key()
         if not public_key_b64:
             raise HTTPException(
                 status_code=500,
-                detail="Server public key is not configured (AUDITSKILL_PUBLIC_KEY).",
+                detail=(
+                    "Server signing key is not configured "
+                    "(AUDITSKILL_PRIVATE_KEY or AUDITSKILL_PUBLIC_KEY)."
+                ),
             )
 
         certificate: dict[str, Any] = body.certificate
@@ -246,11 +249,14 @@ async def list_certificates(
 )
 async def well_known_keys() -> KeysResponse:
     """Publish the auditor's public key so agents can verify certificates offline."""
-    public_key_b64 = os.environ.get("AUDITSKILL_PUBLIC_KEY", "")
+    public_key_b64 = get_public_key()
     if not public_key_b64:
         raise HTTPException(
             status_code=500,
-            detail="Server public key is not configured (AUDITSKILL_PUBLIC_KEY).",
+            detail=(
+                "Server signing key is not configured "
+                "(AUDITSKILL_PRIVATE_KEY or AUDITSKILL_PUBLIC_KEY)."
+            ),
         )
 
     key_id = os.environ.get("AUDITSKILL_KEY_ID", "auditskill-2026-07")

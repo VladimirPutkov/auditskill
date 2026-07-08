@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from auditskill.api.models import Certificate
-from auditskill.core.crypto import sign_document, verify_signature
+from auditskill.core.crypto import derive_public_key, sign_document, verify_signature
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,26 @@ logger = logging.getLogger(__name__)
 PRIVATE_KEY: str = os.environ.get("AUDITSKILL_PRIVATE_KEY", "")
 PUBLIC_KEY_ID: str = os.environ.get("AUDITSKILL_KEY_ID", "auditskill-2026-07")
 CERT_VALIDITY_DAYS: int = 7
+
+
+def get_public_key() -> str:
+    """Return the active verification (public) key, base64-encoded.
+
+    When a signing key is configured, the public key is **derived from it**
+    — a single source of truth, so the published key can never mismatch the
+    key certificates are actually signed with (two independently-pasted env
+    vars drifted apart in production once; this removes that failure class).
+    Falls back to ``AUDITSKILL_PUBLIC_KEY`` for verify-only deployments.
+    """
+    if PRIVATE_KEY:
+        try:
+            return derive_public_key(PRIVATE_KEY)
+        except Exception:
+            logger.exception(
+                "Could not derive public key from AUDITSKILL_PRIVATE_KEY; "
+                "falling back to AUDITSKILL_PUBLIC_KEY"
+            )
+    return os.environ.get("AUDITSKILL_PUBLIC_KEY", "")
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -35,6 +35,16 @@ def generate_keypair() -> tuple[str, str]:
     return private_b64, public_b64
 
 
+def derive_public_key(private_key_b64: str) -> str:
+    """Derive the base64 Ed25519 public key from a base64 private key.
+
+    Lets the service publish/verify with a key that is *guaranteed* to match
+    the signing key — no separately-configured public key that can drift.
+    """
+    signing_key = SigningKey(base64.b64decode(private_key_b64))
+    return base64.b64encode(bytes(signing_key.verify_key)).decode("ascii")
+
+
 def canonicalize(document: dict[str, Any]) -> bytes:
     """Produce a canonical JSON byte string for signing.
 

@@ -5,7 +5,7 @@ description: Pre-load safety auditor for agent skills. Use before loading any SK
 
 # AuditSkill
 
-AuditSkill audits a third-party SKILL.md **before** its text becomes part of your instructions, answering two questions in one call: is it safe to load, and is it worth the tokens? A malicious skill file can hijack an agent the moment it is read; AuditSkill reads it first in a sandbox that executes nothing and returns a machine-readable verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. Deterministic and rule-based — no LLM, sub-second, same input gives the same answer.
+AuditSkill audits a third-party SKILL.md **before** its text becomes part of your instructions, answering two questions in one call: is it safe to load, and is it worth the tokens? A malicious skill file can hijack an agent the moment it is read; AuditSkill reads it first in a sandbox that executes nothing and returns a machine-readable verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. Deterministic and rule-based — no LLM, sub-second, same input gives the same answer. Zero setup: no key, no install — your first call works as-is.
 
 ## Base URL
 
@@ -15,7 +15,33 @@ All `POST` requests require the header `Content-Type: application/json`.
 
 ## Usage scenarios
 
-Pick the scenario matching the user's request and follow its steps exactly — zero human intervention needed. On errors while following any scenario, see "Errors".
+Pick the scenario matching the request and follow its steps exactly — zero human intervention needed. On errors while following any scenario, see "Errors".
+
+### Scenario 0: Demonstrate the service end-to-end (default)
+
+Use when you are told simply to "use this skill", "perform the service", or "run a demo" — with no specific skill file, URL, or certificate given.
+
+1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
+2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds for this call (it fetches and audits every entry; repeat calls are cached and fast). From the response, keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry.
+3. `POST https://auditskill.up.railway.app/audit` with the exact JSON body from the "Example" section below — a deliberately malicious sample, which is audited, never executed. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object.
+4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": <the certificate object from step 3>}` — expect `"valid": true`, proving the verdict is cryptographically signed.
+5. Compose your answer exactly per "Report format" below.
+
+If step 2 fails or returns no results, continue with steps 3–5 and note that the registry was unavailable. Complete all steps without asking the human anything.
+
+#### Report format
+
+```
+AUDITSKILL DEMONSTRATION REPORT
+1. Registry scan (GET /discover): <total_in_registry> skills in the live NANDA Town registry;
+   audited <n>: <x> pass, <y> need review, <z> fail, <u> could not be audited.
+   Top ranked: <name> — <verdict>, score <score> (<rank_reason>).
+   Flagged: <name> — FAILS_BASIC_AUDIT, score <score>. (omit if none)
+2. Attack detection (POST /audit on a malicious sample): <verdict>, score <overall_score>.
+   <rule_id> (<severity>, <category>, line <line>) — one line per finding.
+3. Certificate (POST /verify): <certificate_id> → valid: true, expires <valid_until>.
+Conclusion: <one sentence: what a downstream agent was just protected from>.
+```
 
 ### Scenario 1: Audit a skill before loading it
 

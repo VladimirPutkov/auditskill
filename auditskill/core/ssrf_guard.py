@@ -407,7 +407,9 @@ async def _pinned_request(
     ) as client:
         # Stream the body and abort as soon as the cap is exceeded, so a
         # hostile server cannot make us buffer an unbounded response in
-        # memory before a size check.
+        # memory before a size check.  aiter_bytes() yields *decoded* bytes,
+        # so the cap also bounds decompression bombs (a tiny gzip body that
+        # inflates past the limit is cut off at the limit).
         request = client.build_request(method.upper(), url, **kwargs)
         response = await client.send(request, stream=True)
         try:
@@ -425,10 +427,30 @@ async def _pinned_request(
         finally:
             await response.aclose()
 
+    return _rebuild_response(response, b"".join(chunks), request)
+
+
+def _rebuild_response(
+    original: httpx.Response, decoded_body: bytes, request: httpx.Request
+) -> httpx.Response:
+    """Package a fully-read, *decoded* body as a plain httpx.Response.
+
+    The streamed chunks came out of httpx's content decoder, so the body is
+    already plaintext.  The original ``Content-Encoding`` / ``Content-Length``
+    / ``Transfer-Encoding`` headers describe the wire form, not this body —
+    carrying them over would make httpx try to gunzip plaintext a second
+    time and fail with a DecodingError (this broke /discover when the NANDA
+    registry started serving gzip).
+    """
+    headers = [
+        (k, v)
+        for k, v in original.headers.raw
+        if k.lower() not in (b"content-encoding", b"content-length", b"transfer-encoding")
+    ]
     return httpx.Response(
-        status_code=response.status_code,
-        headers=response.headers,
-        content=b"".join(chunks),
+        status_code=original.status_code,
+        headers=headers,
+        content=decoded_body,
         request=request,
-        extensions=response.extensions,
+        extensions=original.extensions,
     )
