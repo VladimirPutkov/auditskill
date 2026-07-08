@@ -64,6 +64,42 @@ router = APIRouter()
 @limiter.limit("10/minute")
 async def audit_skill(request: Request, body: AuditRequest) -> AuditResponse:
     """Run structural, security, and liveness checks on a SKILL.md file."""
+    return await _execute_audit(request, body)
+
+
+@router.get(
+    "/audit",
+    response_model=AuditResponse,
+    responses={422: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Audit a SKILL.md by URL (GET fallback)",
+    description=(
+        "URL-based audit for agents that can only issue GET requests. "
+        "Same pipeline and response shape as POST /audit; raw `skill_md` "
+        "text still requires POST (too large for a query string)."
+    ),
+)
+@limiter.limit("10/minute")
+async def audit_skill_get(
+    request: Request,
+    skill_url: str = Query(..., description="HTTPS URL of the SKILL.md to audit."),
+    mode: str = Query(default="safe_static", description="'safe_static' or 'liveness'."),
+    model: str | None = Query(default=None, description="Optional model ID to narrow costs."),
+) -> AuditResponse:
+    """GET fallback for URL-based audits (egress-restricted agents)."""
+    try:
+        body = AuditRequest(skill_url=skill_url, mode=mode, model=model)  # type: ignore[arg-type]
+    except Exception as exc:  # pydantic ValidationError → self-healing 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _execute_audit(request, body)
+
+
+async def _execute_audit(request: Request, body: AuditRequest) -> AuditResponse:
+    """Shared audit implementation behind both /audit routes.
+
+    Kept outside the rate-limited handlers so the GET fallback does not
+    burn two rate-limit slots per call by invoking the decorated POST
+    handler.
+    """
     store = request.app.state.store
 
     try:

@@ -29,7 +29,11 @@ Use when you are told simply to "use this skill", "perform the service", or "run
 4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": <the certificate object from step 3>}` — expect `"valid": true`, proving the verdict is cryptographically signed.
 5. Compose your answer exactly per "Report format" below.
 
-If step 2 fails or returns no results, continue with steps 3–5 and note that the registry was unavailable. Complete all steps without asking the human anything.
+Fallbacks — never ask the human, never stop early:
+- If step 2 fails or returns no results, continue with steps 3–5 and note the registry was unavailable.
+- If step 3 fails after one retry (see "Errors"), skip step 4 and note that attack detection could not be demonstrated.
+- If step 4 fails, report the audit result anyway and note the certificate is issued but was not re-verified.
+- Always produce the step 5 report: keep every numbered section, and where a step failed, state what failed and why instead of its results.
 
 #### Report format
 
@@ -88,6 +92,7 @@ Use when a user (or another agent) hands you a certificate object and asks wheth
 | Endpoint | Purpose | Parameters |
 |---|---|---|
 | `POST /audit` | Audit one SKILL.md → verdict + certificate | Body: exactly one of `skill_md` (raw text) or `skill_url` (HTTPS URL; GitHub repo/blob page URLs are rewritten to the raw file automatically). Optional: `mode` = `safe_static` (offline) or `liveness` (also GET/HEAD-probes endpoints; default); `model` (narrow cost to one model ID from `/benchmarks`) |
+| `GET /audit` | Same audit by URL, for GET-only agents | Query: `skill_url` (required), `mode` (default `safe_static`), `model` |
 | `GET /discover` | Audit the live registry, return it ranked best-first | Query: `q` (filter), `mode` (default `safe_static`), `limit` (1-30, default 20) |
 | `POST /verify` | Verify a certificate's Ed25519 signature (stateless) | Body: `{"certificate": {...full object...}}` |
 | `GET /certificate/{id}` | Fetch a stored certificate by ID (404 if unknown) | Path: certificate ID (`seal_...`) |
@@ -184,7 +189,7 @@ Errors are self-describing; the response's `detail` field says how to fix the re
 
 | Endpoint | Limit |
 |---|---|
-| `POST /audit` | 10 / min per IP |
+| `POST /audit`, `GET /audit` | 10 / min per IP each |
 | `POST /verify` | 60 / min |
 | `GET /certificate/{id}` | 60 / min |
 | `GET /certificates` | 30 / min |

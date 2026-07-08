@@ -610,3 +610,36 @@ def test_http_infra_routes():
 
         r = client.get("/benchmarks")
         assert r.status_code == 200 and r.json()["total_rules"] == 34
+
+
+def test_http_get_audit_fallback(monkeypatch):
+    # GET /audit?skill_url=... — same pipeline as POST, for GET-only agents.
+    from fastapi.testclient import TestClient
+    from auditskill.api.main import app
+    from auditskill.api import routes
+
+    async def fake_fetch(url):
+        return _read("good_skill.md")
+
+    monkeypatch.setattr(routes, "fetch_skill_from_url", fake_fetch)
+
+    with TestClient(app) as client:
+        r = client.get(
+            "/audit",
+            params={"skill_url": "https://example.com/SKILL.md", "mode": "safe_static"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["verdict"] in ("PASS_BASIC_AUDIT", "PASS_WITH_WARNINGS")
+        assert data["security"]["score"] == 100
+
+        # Bad mode → self-healing 422, not a 500.
+        r = client.get(
+            "/audit",
+            params={"skill_url": "https://example.com/SKILL.md", "mode": "bogus"},
+        )
+        assert r.status_code == 422
+
+        # Non-HTTPS URL → 422 (same contract as POST).
+        r = client.get("/audit", params={"skill_url": "http://example.com/SKILL.md"})
+        assert r.status_code == 422

@@ -133,6 +133,7 @@ No callback to AuditSkill required. The certificate is portable and stateless.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/audit` | Full audit of a SKILL.md. Accepts `skill_md` (raw text) or `skill_url` (HTTPS). Returns verdict + signed certificate. |
+| `GET` | `/audit` | Same audit by `skill_url` query param — fallback for GET-only agents. |
 | `POST` | `/verify` | Stateless Ed25519 signature verification of a certificate. |
 | `GET` | `/discover` | Audits the live NANDA Town registry inline. Returns listings with verdicts attached. |
 | `GET` | `/certificate/{id}` | Fetch a stored certificate by ID. |
