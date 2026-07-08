@@ -509,3 +509,76 @@ def test_signed_cert_verifies_with_derived_key(monkeypatch):
         scope_score=90, metadata_score=80,
     )
     assert verify_certificate(cert.model_dump(), cert_mod.get_public_key()) is True
+
+
+# --------------------------------------------------------------------------
+# GitHub URL rewriting (registry entries point at HTML pages, not raw files)
+# --------------------------------------------------------------------------
+
+def test_github_blob_url_rewritten_to_raw():
+    from auditskill.core.auditor import github_raw_candidates
+    assert github_raw_candidates(
+        "https://github.com/moltpass/captcha4agents/blob/main/skill.md"
+    ) == ["https://raw.githubusercontent.com/moltpass/captcha4agents/main/skill.md"]
+
+
+def test_github_raw_path_rewritten():
+    from auditskill.core.auditor import github_raw_candidates
+    assert github_raw_candidates(
+        "https://github.com/user/repo/raw/v1.2/docs/SKILL.md"
+    ) == ["https://raw.githubusercontent.com/user/repo/v1.2/docs/SKILL.md"]
+
+
+def test_github_bare_repo_yields_head_candidates():
+    from auditskill.core.auditor import github_raw_candidates
+    assert github_raw_candidates("https://github.com/anilchowdary07/aegis-escrow-skill") == [
+        "https://raw.githubusercontent.com/anilchowdary07/aegis-escrow-skill/HEAD/SKILL.md",
+        "https://raw.githubusercontent.com/anilchowdary07/aegis-escrow-skill/HEAD/skill.md",
+    ]
+
+
+def test_non_github_and_other_github_paths_pass_through():
+    from auditskill.core.auditor import github_raw_candidates
+    for url in (
+        "https://vouchnet.onrender.com/skill.md",
+        "https://raw.githubusercontent.com/u/r/main/SKILL.md",
+        "https://github.com/user/repo/tree/main",   # directory page — no raw form
+        "https://github.com/user",                   # profile page
+    ):
+        assert github_raw_candidates(url) == [url]
+
+
+async def test_fetch_rejects_http_error_status(monkeypatch):
+    # A 404 body ("404: Not Found") must be an unfetchable URL, not a
+    # document that gets audited and reported as a failing skill.
+    import httpx
+    from auditskill.core import auditor
+
+    async def fake_request(method, url, **kw):
+        return httpx.Response(
+            404, content=b"404: Not Found",
+            headers={"content-type": "text/plain"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(auditor, "safe_request", fake_request)
+    with pytest.raises(ValueError, match="HTTP 404"):
+        await auditor.fetch_skill_from_url("https://example.com/SKILL.md")
+
+
+async def test_fetch_falls_back_to_second_candidate(monkeypatch):
+    # Bare repo: SKILL.md 404s, lowercase skill.md exists → second candidate wins.
+    import httpx
+    from auditskill.core import auditor
+
+    async def fake_request(method, url, **kw):
+        status = 200 if url.endswith("/skill.md") else 404
+        return httpx.Response(
+            status, content=b"# Skill\n\nBody.",
+            headers={"content-type": "text/plain"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(auditor, "safe_request", fake_request)
+    text = await auditor.fetch_skill_from_url("https://github.com/user/repo")
+    assert text.startswith("# Skill")

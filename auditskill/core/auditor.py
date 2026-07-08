@@ -455,8 +455,47 @@ def _estimate_context_cost(
 # ---------------------------------------------------------------------------
 
 
+_GITHUB_HOSTS = frozenset({"github.com", "www.github.com"})
+
+
+def github_raw_candidates(url: str) -> list[str]:
+    """Return fetchable candidate URLs for *url*.
+
+    GitHub page URLs serve HTML, not the file: registry entries routinely
+    point at ``github.com/user/repo/blob/...`` (a ~260 KB page the size cap
+    rejects) or at the bare repository.  Rewrite deterministically:
+
+    - ``github.com/u/r/blob/<ref>/<path>`` or ``/raw/<ref>/<path>`` →
+      ``raw.githubusercontent.com/u/r/<ref>/<path>``
+    - ``github.com/u/r`` (bare repo) → the conventional skill locations on
+      the default branch: ``.../u/r/HEAD/SKILL.md`` then ``.../HEAD/skill.md``
+      (the ``HEAD`` ref resolves main/master automatically)
+
+    Every other URL (including deeper GitHub paths like ``/tree/``) passes
+    through unchanged as the single candidate.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host not in _GITHUB_HOSTS:
+        return [url]
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) >= 5 and parts[2] in ("blob", "raw"):
+        rest = "/".join(parts[:2] + parts[3:])
+        return [f"https://raw.githubusercontent.com/{rest}"]
+    if len(parts) == 2:
+        base = f"https://raw.githubusercontent.com/{parts[0]}/{parts[1]}/HEAD"
+        return [f"{base}/SKILL.md", f"{base}/skill.md"]
+    return [url]
+
+
 async def fetch_skill_from_url(url: str) -> str:
     """Fetch a SKILL.md file from a remote URL via the SSRF-safe client.
+
+    GitHub page URLs are rewritten to their raw-content equivalents first
+    (see :func:`github_raw_candidates`); candidates are tried in order and
+    the first success wins.
 
     Args:
         url: The URL to retrieve (must survive SSRF validation).
@@ -465,16 +504,35 @@ async def fetch_skill_from_url(url: str) -> str:
         The raw text content of the SKILL.md file.
 
     Raises:
-        ValueError: If the response is not text content, exceeds the
-            size limit, or the request fails.
+        ValueError: If the response is an HTTP error, not text content,
+            exceeds the size limit, or the request fails.
         SSRFBlockedError: If the URL targets a disallowed host/IP.
     """
+    candidates = github_raw_candidates(url)
+    last_exc: Exception | None = None
+    for candidate in candidates:
+        try:
+            return await _fetch_one(candidate)
+        except (ValueError, SSRFBlockedError) as exc:
+            last_exc = exc
+    assert last_exc is not None  # candidates is never empty
+    raise last_exc
+
+
+async def _fetch_one(url: str) -> str:
+    """Fetch and validate a single URL (no rewriting)."""
     try:
         response = await safe_request("GET", url, timeout_override=_FETCH_TIMEOUT)
     except SSRFBlockedError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"Failed to fetch SKILL.md from {url}: {exc}") from exc
+
+    # An error page (404, 500, …) is not a skill document.  Without this
+    # check a "404: Not Found" body would be audited and reported as a
+    # failing *skill* instead of an unfetchable one.
+    if response.status_code >= 400:
+        raise ValueError(f"HTTP {response.status_code} from {url}")
 
     content_type = response.headers.get("content-type", "")
     if not any(

@@ -23,7 +23,7 @@ Use when you are told simply to "use this skill", "perform the service", or "run
 
 1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
 2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds for this call (it fetches and audits every entry; repeat calls are cached and fast). From the response, keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry.
-3. `POST https://auditskill.up.railway.app/audit` with the exact JSON body from the "Example" section below — a deliberately malicious sample, which is audited, never executed. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object.
+3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in the "Example" section below — a deliberately malicious sample, which is audited, never executed. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object.
 4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": <the certificate object from step 3>}` — expect `"valid": true`, proving the verdict is cryptographically signed.
 5. Compose your answer exactly per "Report format" below.
 
@@ -83,7 +83,7 @@ Use when a user (or another agent) hands you a certificate object and asks wheth
 
 | Endpoint | Purpose | Parameters |
 |---|---|---|
-| `POST /audit` | Audit one SKILL.md → verdict + certificate | Body: exactly one of `skill_md` (raw text) or `skill_url` (HTTPS URL). Optional: `mode` = `safe_static` (offline) or `liveness` (also GET/HEAD-probes endpoints; default); `model` (narrow cost to one model ID from `/benchmarks`) |
+| `POST /audit` | Audit one SKILL.md → verdict + certificate | Body: exactly one of `skill_md` (raw text) or `skill_url` (HTTPS URL; GitHub repo/blob page URLs are rewritten to the raw file automatically). Optional: `mode` = `safe_static` (offline) or `liveness` (also GET/HEAD-probes endpoints; default); `model` (narrow cost to one model ID from `/benchmarks`) |
 | `GET /discover` | Audit the live registry, return it ranked best-first | Query: `q` (filter), `mode` (default `safe_static`), `limit` (1-30, default 20) |
 | `POST /verify` | Verify a certificate's Ed25519 signature (stateless) | Body: `{"certificate": {...full object...}}` |
 | `GET /certificate/{id}` | Fetch a stored certificate by ID (404 if unknown) | Path: certificate ID (`seal_...`) |
