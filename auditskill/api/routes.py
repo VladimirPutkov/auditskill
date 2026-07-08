@@ -183,18 +183,22 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
 
         certificate: dict[str, Any] = body.certificate
 
-        # Echo fields are attacker-supplied — coerce them so a malformed
-        # certificate yields {valid: false}, never a 500.
+        # certificate_id is a harmless opaque label — safe to echo so the
+        # caller can correlate the answer.  verdict/score are the trust-
+        # bearing claims and are echoed ONLY when the signature is valid;
+        # on any failure they are withheld (returning null) so a naive agent
+        # can never read a tampered "PASS_BASIC_AUDIT / 99" back out of a
+        # certificate that did not verify.
         cert_id = str(certificate.get("certificate_id", "") or "")
-        verdict = str(certificate.get("verdict", "") or "")
-        raw_score = certificate.get("score")
-        score = raw_score if isinstance(raw_score, int) else None
 
-        # Extract and clean the signature value -------------------------
         raw_signature = certificate.get("signature", "")
         if not raw_signature:
             return VerifyResponse(
-                valid=False, certificate_id=cert_id, verdict=verdict, score=score
+                valid=False,
+                certificate_id=cert_id,
+                verdict=None,
+                score=None,
+                error="Certificate has no 'signature' field — nothing to verify.",
             )
 
         # Pass the FULL certificate (signature included): verify_certificate
@@ -202,8 +206,27 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
         # the signature here would make verification always fail.
         valid = verify_certificate(certificate, public_key_b64)
 
+        if not valid:
+            return VerifyResponse(
+                valid=False,
+                certificate_id=cert_id,
+                verdict=None,
+                score=None,
+                error=(
+                    "Signature verification failed — the certificate is not "
+                    "authentic or has been modified since it was issued. Do not "
+                    "trust its verdict or score."
+                ),
+            )
+
+        # Signature is valid: the verdict/score are now trustworthy to echo.
+        raw_score = certificate.get("score")
         return VerifyResponse(
-            valid=valid, certificate_id=cert_id, verdict=verdict, score=score
+            valid=True,
+            certificate_id=cert_id,
+            verdict=str(certificate.get("verdict", "") or ""),
+            score=raw_score if isinstance(raw_score, int) else None,
+            error=None,
         )
 
     except HTTPException:

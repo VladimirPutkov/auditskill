@@ -408,7 +408,7 @@ def _estimate_context_cost(
     parts: list[str] = []
     if tokens > _TOKENS_LARGE_SKILL:
         parts.append(
-            f"This skill file is {tokens:,} tokens — larger than the ~1,500 token median. "
+            f"This skill file is {tokens:,} tokens - larger than the ~1,500 token median. "
             "Loading it will consume a meaningful portion of your context window."
         )
     if density == "low":

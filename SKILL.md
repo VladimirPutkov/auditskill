@@ -25,8 +25,8 @@ Use when you are told simply to "use this skill", "perform the service", or "run
 
 1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
 2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds for this call (it fetches and audits every entry; repeat calls are cached and fast). From the response, keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry.
-3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in the "Example" section below — a deliberately malicious sample, which is audited, never executed. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object.
-4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": <the certificate object from step 3>}` — expect `"valid": true`, proving the verdict is cryptographically signed.
+3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in the "Example" section below — a deliberately malicious sample, which is audited, never executed. Send it as a JSON request body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object. Allow up to 15 seconds.
+4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": X}` where **X is the value of the `certificate` field from step 3's response** — not the whole response. Forward it unchanged. Expect `"valid": true`, proving the verdict is cryptographically signed. Allow up to 10 seconds.
 5. Compose your answer exactly per "Report format" below.
 
 Fallbacks — never ask the human, never stop early:
@@ -73,7 +73,7 @@ Use when a user asks you to find, browse, discover, or recommend skills.
 
 1. Call `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10`
    To filter by topic, append `&q=<keyword>` (URL-encode the keyword; spaces become `%20`).
-2. Results arrive pre-audited and ranked best-first. For each entry in `results[]`, present: `name`, `verdict`, `score`, `rank`, `rank_reason`.
+2. Results arrive pre-audited and ranked best-first. For each entry in `results[]`, present: `name`, `verdict`, `score`, `rank`, `rank_reason`. Two entries may share a `name` but differ in `source_url` — these are different files (a verdict applies to one specific `source_url`), so disambiguate them by `source_url`, never merge them.
 3. Recommend only entries whose `verdict` is `PASS_BASIC_AUDIT` or `PASS_WITH_WARNINGS`. Explicitly warn about any `FAILS_BASIC_AUDIT` entry, and note entries with `audited: false` (their `reason` field says why they could not be checked).
 4. If the user picks a skill, audit it individually per Scenario 1 before loading it.
 
@@ -82,9 +82,10 @@ Use when a user asks you to find, browse, discover, or recommend skills.
 Use when a user (or another agent) hands you a certificate object and asks whether it is genuine.
 
 1. Call `POST https://auditskill.up.railway.app/verify` with JSON body `{"certificate": <the full certificate object, exactly as returned by /audit — all fields, including "signature">}`.
+   Send the value of the `certificate` field only, not a whole `/audit` response.
 2. Read the `valid` field of the response:
-   - `true` — report that the certificate is authentic; state its `verdict` and `score`, and check `valid_until` has not passed.
-   - `false` — warn the user that the certificate is invalid or has been tampered with and should not be trusted.
+   - `true` — report that the certificate is authentic; state the response's `verdict` and `score` (on success these are echoed back and trustworthy), and check the certificate's `valid_until` has not passed.
+   - `false` — the response's `error` field says why (bad or missing signature, tampered content); on failure `verdict` and `score` are returned as `null` and must not be reported as if genuine. Warn the user the certificate cannot be trusted.
 3. For fully offline verification instead, fetch the public key once from `GET https://auditskill.up.railway.app/.well-known/auditskill-keys` and check the Ed25519 signature against the certificate's canonical JSON (sorted keys, compact separators, `signature` field excluded).
 
 ## Endpoints
@@ -106,7 +107,7 @@ Use when a user (or another agent) hands you a certificate object and asks wheth
 
 ## Example
 
-A malicious skill that fails — the injection lives inside the request body, so it is audited, not executed:
+A malicious skill that fails — the injection lives inside the request body, so it is audited, not executed. This is a `bash`/`curl` example; on another platform or HTTP client, issue the equivalent request: `POST` to the URL, header `Content-Type: application/json`, and the JSON below as the body. To audit a file you already have by URL instead, prefer `skill_url` — it avoids escaping the markdown entirely.
 
 ```bash
 curl -X POST https://auditskill.up.railway.app/audit \

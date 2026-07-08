@@ -71,6 +71,11 @@ class AuditRequest(BaseModel):
 
         if has_md:
             assert self.skill_md is not None  # for type narrowing
+            if not self.skill_md.strip():
+                raise ValueError(
+                    "skill_md was provided but is empty. Send the SKILL.md text "
+                    "in 'skill_md', or use 'skill_url' to fetch it by URL."
+                )
             if len(self.skill_md) > _MAX_SKILL_MD_CHARS:
                 raise ValueError(
                     f"skill_md exceeds maximum length of "

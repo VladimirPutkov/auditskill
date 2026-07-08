@@ -643,3 +643,61 @@ def test_http_get_audit_fallback(monkeypatch):
         # Non-HTTPS URL → 422 (same contract as POST).
         r = client.get("/audit", params={"skill_url": "http://example.com/SKILL.md"})
         assert r.status_code == 422
+
+
+def test_verify_withholds_tampered_verdict_and_score(monkeypatch):
+    # BUG-2/BUG-4: a certificate that fails signature check must NOT echo its
+    # (attacker-controlled) verdict/score, and must carry a non-null error.
+    import secrets as _secrets
+    from fastapi.testclient import TestClient
+    priv, _ = generate_keypair()
+    monkeypatch.setenv("AUDITSKILL_PRIVATE_KEY", priv)
+    import auditskill.core.certifier as cert_mod
+    monkeypatch.setattr(cert_mod, "PRIVATE_KEY", priv)
+    from auditskill.api.main import app
+
+    nonce = _secrets.token_hex(4)  # unique body → never served from a stale cache
+    with TestClient(app) as client:
+        aud = client.post(
+            "/audit",
+            json={"skill_md": f"# X{nonce}\n\nD.\n\n## Base URL\nhttps://x.example.com\n\n## Endpoints\nGET /y",
+                  "mode": "safe_static"},
+        ).json()
+        cert = dict(aud["certificate"])
+        cert["verdict"] = "PASS_BASIC_AUDIT"
+        cert["score"] = 99
+        v = client.post("/verify", json={"certificate": cert}).json()
+        assert v["valid"] is False
+        assert v["verdict"] is None and v["score"] is None
+        assert v["error"] and "tamper" in v["error"].lower() or "not authentic" in v["error"].lower()
+
+        # Missing signature → distinct, non-null error.
+        v2 = client.post("/verify", json={"certificate": {}}).json()
+        assert v2["valid"] is False and v2["verdict"] is None and v2["error"]
+
+        # Genuine certificate still verifies and echoes its verdict/score.
+        v3 = client.post("/verify", json={"certificate": aud["certificate"]}).json()
+        assert v3["valid"] is True and v3["verdict"] == aud["verdict"]
+
+
+def test_empty_skill_md_gives_precise_error():
+    # BUG-7: empty skill_md must say so, not "must be provided".
+    from auditskill.api.models import AuditRequest
+    with pytest.raises(ValueError, match="empty"):
+        AuditRequest(skill_md="   ", mode="safe_static")
+
+
+def test_certificate_fields_are_ascii(monkeypatch):
+    # BUG-1/BUG-9: fields AuditSkill generates must be ASCII so no serializer
+    # or transport charset can mangle them and break signature verification.
+    import auditskill.core.certifier as cert_mod
+    priv, _ = generate_keypair()
+    monkeypatch.setattr(cert_mod, "PRIVATE_KEY", priv)
+    cert = create_certificate(
+        skill_name="x", skill_hash=hash_text("x"), mode="safe_static",
+        overall_score=90, verdict="PASS_BASIC_AUDIT",
+        structure_score=90, liveness_score=None, security_score=90,
+        scope_score=90, metadata_score=80,
+    )
+    for lim in cert.limitations:
+        lim.encode("ascii")  # raises if any non-ASCII char remains

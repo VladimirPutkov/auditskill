@@ -144,7 +144,7 @@ def _generate_recommendations(
         domain_list = ", ".join(domains)
         recs.append(
             f"Skill covers {len(domains)} domains ({domain_list}) "
-            "— consider splitting into focused skills"
+            "- consider splitting into focused skills"
         )
 
     for section in missing_sections:
@@ -153,14 +153,14 @@ def _generate_recommendations(
     endpoint_count = len(parsed.endpoints)
     if endpoint_count > 10:
         recs.append(
-            f"Consider splitting — {endpoint_count} endpoints may be "
+            f"Consider splitting - {endpoint_count} endpoints may be "
             "hard for agents to navigate"
         )
 
     example_count = getattr(parsed, "example_count", 0) or 0
     if example_count == 0:
         recs.append(
-            "Add usage examples — agents rely on examples to understand "
+            "Add usage examples - agents rely on examples to understand "
             "calling patterns"
         )
 
@@ -226,7 +226,7 @@ def analyze_scope(parsed: ParsedSkill) -> ScopeReport:
     findings: list[str] = []
     if breadth == "broad":
         findings.append(
-            f"Skill spans {len(domains)} domains ({', '.join(domains)}) — very broad scope"
+            f"Skill spans {len(domains)} domains ({', '.join(domains)}) - very broad scope"
         )
     for section in missing:
         findings.append(f"Missing recommended section: {section}")

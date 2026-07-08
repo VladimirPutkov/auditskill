@@ -79,11 +79,11 @@ def _score_to_status(score: int | None) -> str:
 def _build_limitations(mode: str) -> list[str]:
     """Assemble the list of attestation limitations for the given audit mode."""
     limitations: list[str] = [
-        "Rule-based audit only — does not guarantee semantic correctness",
+        "Rule-based audit only - does not guarantee semantic correctness",
         "Does not guarantee future availability of endpoints",
     ]
     if mode == "safe_static":
-        limitations.append("Endpoints were not tested — liveness unknown")
+        limitations.append("Endpoints were not tested - liveness unknown")
     if mode == "liveness":
         limitations.append(
             "State-changing endpoints (POST/PUT/DELETE) were not executed"
