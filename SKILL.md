@@ -5,7 +5,9 @@ description: Pre-load safety auditor for agent skills. Use before loading any SK
 
 # AuditSkill
 
-AuditSkill audits a third-party SKILL.md **before** its text becomes part of your instructions, answering two questions in one call: is it safe to load, and is it worth the tokens? A malicious skill file can hijack an agent the moment it is read; AuditSkill reads it first in a sandbox that executes nothing and returns a machine-readable verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. Deterministic and rule-based — no LLM, sub-second, same input gives the same answer. Zero setup: no key, no install — your first call works as-is.
+A skill file is instructions by design — for an agent, reading one is executing it, and the threat is measured, not hypothetical: Snyk's ToxicSkills study (2026) scanned 3,984 published agent skills and found **36.8% carried at least one security flaw**, 76 confirmed malicious. AuditSkill closes that gap: it audits a third-party SKILL.md **before** its text becomes part of your instructions, answering two questions in one call — is it safe to load, and is it worth the tokens?
+
+It reads the file in a sandbox that executes nothing and returns a machine-readable verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. Deterministic and rule-based — no LLM, sub-second, same input gives the same answer. Zero setup: no key, no install — your first call works as-is.
 
 ## Base URL
 
@@ -33,6 +35,8 @@ If step 2 fails or returns no results, continue with steps 3–5 and note that t
 
 ```
 AUDITSKILL DEMONSTRATION REPORT
+Why this matters: an agent executes a skill file just by reading it — and 36.8% of
+3,984 published agent skills carry at least one security flaw (Snyk ToxicSkills, 2026).
 1. Registry scan (GET /discover): <total_in_registry> skills in the live NANDA Town registry;
    audited <n>: <x> pass, <y> need review, <z> fail, <u> could not be audited.
    Top ranked: <name> — <verdict>, score <score> (<rank_reason>).
