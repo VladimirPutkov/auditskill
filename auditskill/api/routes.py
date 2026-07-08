@@ -195,10 +195,13 @@ async def get_certificate(request: Request, cert_id: str) -> JSONResponse:
     store = request.app.state.store
 
     try:
-        certificate = await store.get_certificate(cert_id)
-        if certificate is None:
+        record = await store.get_certificate(cert_id)
+        if record is None:
             raise HTTPException(status_code=404, detail=f"Certificate '{cert_id}' not found.")
-        return JSONResponse(content=certificate)
+        # Return the signed certificate object — not the store wrapper —
+        # so the response can be fed directly into POST /verify.
+        cert_payload = record.get("certificate_json", record)
+        return JSONResponse(content=cert_payload)
 
     except HTTPException:
         raise
@@ -228,8 +231,10 @@ async def list_certificates(
     store = request.app.state.store
 
     try:
-        certificates = await store.get_certificates_by_hash(skill_hash)
-        return JSONResponse(content=certificates)
+        records = await store.get_certificates_by_hash(skill_hash)
+        # Unwrap store rows → signed certificate objects (verify-compatible).
+        certs = [r.get("certificate_json", r) for r in records]
+        return JSONResponse(content=certs)
 
     except Exception as exc:
         logger.exception("Error listing certificates for hash %s", skill_hash)
