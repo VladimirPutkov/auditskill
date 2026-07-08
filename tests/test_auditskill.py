@@ -582,3 +582,31 @@ async def test_fetch_falls_back_to_second_candidate(monkeypatch):
     monkeypatch.setattr(auditor, "safe_request", fake_request)
     text = await auditor.fetch_skill_from_url("https://github.com/user/repo")
     assert text.startswith("# Skill")
+
+
+# --------------------------------------------------------------------------
+# HTTP-level route tests (no network, no auth)
+# --------------------------------------------------------------------------
+
+def test_http_infra_routes():
+    from fastapi.testclient import TestClient
+    from auditskill.api.main import app
+
+    with TestClient(app) as client:
+        r = client.get("/")
+        assert r.status_code == 200
+        assert r.json()["skill_md"] == "/skill.md"
+
+        r = client.get("/skill.md")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/markdown")
+        assert r.text.lstrip().startswith("---")  # frontmatter present
+
+        r = client.get("/health")
+        assert r.status_code == 200 and r.json()["status"] == "ok"
+
+        r = client.get("/about")
+        assert r.status_code == 200 and r.json()["service"] == "AuditSkill"
+
+        r = client.get("/benchmarks")
+        assert r.status_code == 200 and r.json()["total_rules"] == 34

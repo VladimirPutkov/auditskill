@@ -17,8 +17,10 @@ import logging
 import os
 from typing import Any
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from auditskill.api.rate_limiter import limiter
 from auditskill.api.models import (
@@ -272,6 +274,52 @@ async def well_known_keys() -> KeysResponse:
             )
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /  and  GET /skill.md
+# ---------------------------------------------------------------------------
+
+# Repo root (two levels above auditskill/api/); SKILL.md ships in the image.
+_SKILL_MD_PATH = Path(__file__).resolve().parents[2] / "SKILL.md"
+
+
+@router.get(
+    "/",
+    summary="Service index",
+    description="Minimal JSON pointer so the root URL is never a dead end.",
+)
+async def index() -> dict[str, Any]:
+    """Point agents and humans at the machine manifest and the skill file."""
+    return {
+        "service": "AuditSkill",
+        "skill_md": "/skill.md",
+        "about": "/about",
+        "benchmarks": "/benchmarks",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
+@router.get(
+    "/skill.md",
+    summary="Serve this service's own SKILL.md",
+    description=(
+        "The canonical SKILL.md for AuditSkill, served from the deployed "
+        "code itself — so the registry entry and the running service can "
+        "never drift apart."
+    ),
+)
+async def skill_md() -> PlainTextResponse:
+    """Serve the SKILL.md file that ships with the deployed service."""
+    try:
+        text = _SKILL_MD_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.exception("SKILL.md not found at %s", _SKILL_MD_PATH)
+        raise HTTPException(
+            status_code=500, detail="SKILL.md is not available on this deployment."
+        ) from exc
+    return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------

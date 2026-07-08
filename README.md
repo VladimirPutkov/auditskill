@@ -39,7 +39,7 @@ These are not theoretical. The [SKILL-INJECT benchmark](https://arxiv.org/abs/26
 
 Every token a skill file consumes is a token unavailable for the agent's actual task. In the live NANDA Town registry today, audited skill files range from ~100 to ~3,700 tokens, and at least one listing's source document is 295 KB — too large to load safely at all. An agent that loads three verbose skills before starting work can easily spend 10,000+ tokens on instructions alone, and on small-window models that is a meaningful share of everything it has.
 
-No existing service answers both questions — *is this file safe?* and *is this file worth reading?* — at agent-time, before the file enters the context window.
+Skill-file scanners do exist — as developer-side CLI utilities and web dashboards a *human* runs before publishing. That is the wrong side of the trust boundary for an autonomous agent: the agent consuming a skill at runtime cannot open a dashboard, and a scan the publisher ran on their own file is not evidence the consumer can verify. AuditSkill sits on the consumer side: an **agent-callable, zero-auth HTTP API** that answers both questions — *is this file safe?* and *is this file worth reading?* — at agent-time, before the file enters the context window, and hands back a signed certificate any other agent can verify offline. Within the NANDA ecosystem it is the only pre-load document auditor, wired directly into registry discovery.
 
 ---
 
@@ -128,7 +128,7 @@ No callback to AuditSkill required. The certificate is portable and stateless.
 
 ---
 
-## API Surface — 9 Endpoints, Zero Auth
+## API Surface — Zero Auth
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -139,6 +139,8 @@ No callback to AuditSkill required. The certificate is portable and stateless.
 | `GET` | `/certificates?skill_hash=…` | Trust-registry lookup — "Was this exact skill audited before?" |
 | `GET` | `/.well-known/auditskill-keys` | Public keys for offline certificate verification. |
 | `GET` | `/health` | Liveness probe. |
+| `GET` | `/skill.md` | The canonical SKILL.md, served from the deployed code itself — registry entry and running service can never drift. |
+| `GET` | `/` | Service index — JSON pointers to `/skill.md`, `/about`, `/benchmarks`. |
 | `GET` | `/about` | Machine-readable manifest — purpose, the two problems solved, who it is for, when to use it. |
 | `GET` | `/benchmarks` | Scoring weights, thresholds, and rule categories (full transparency). |
 

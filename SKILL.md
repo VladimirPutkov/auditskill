@@ -96,6 +96,8 @@ Use when a user (or another agent) hands you a certificate object and asks wheth
 | `GET /health` | Liveness probe → `{"status": "ok"}` | — |
 | `GET /about` | Machine-readable manifest: what/why/when | — |
 | `GET /benchmarks` | Scoring weights, thresholds, rule categories, priced models | — |
+| `GET /skill.md` | This document, served from the deployed code itself | — |
+| `GET /` | Service index: JSON pointers to the endpoints above | — |
 
 ## Example
 
@@ -187,7 +189,7 @@ Errors are self-describing; the response's `detail` field says how to fix the re
 | `GET /certificate/{id}` | 60 / min |
 | `GET /certificates` | 30 / min |
 | `GET /discover` | 5 / min (each call audits many skills) |
-| `GET /health`, `/about`, `/benchmarks`, `/.well-known/auditskill-keys` | unlimited |
+| `GET /`, `/health`, `/about`, `/benchmarks`, `/skill.md`, `/.well-known/auditskill-keys` | unlimited |
 
 ## Authentication
 
