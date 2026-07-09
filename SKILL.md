@@ -5,9 +5,34 @@ description: Pre-load safety auditor for agent skills. Use before loading any SK
 
 # AuditSkill
 
-A skill file is instructions by design — for an agent, reading one is executing it, and the threat is measured, not hypothetical: Snyk's ToxicSkills study (2026) scanned 3,984 published agent skills and found **36.8% carried at least one security flaw**, 76 confirmed malicious. AuditSkill closes that gap: it audits a third-party SKILL.md **before** its text becomes part of your instructions, answering two questions in one call — is it safe to load, and is it worth the tokens?
+AuditSkill is the customs checkpoint for agent skills: it audits a third-party SKILL.md **before** its text becomes part of your instructions, and answers two questions in one call — is it safe to load, and is it worth the tokens?
 
-It reads the file in a sandbox that executes nothing and returns a machine-readable verdict, per-module scores with line-numbered findings, a per-model context-cost estimate, and an Ed25519-signed certificate. Deterministic and rule-based — no LLM, sub-second, same input gives the same answer. Zero setup: no key, no install — your first call works as-is.
+## The problem
+
+For a human, reading a document is passive. For an AI agent, **reading a skill file is executing it** — the moment a SKILL.md enters the context window, its text becomes operative instructions the agent will act on. That makes skill files a live attack surface, and the risk is measured, not hypothetical:
+
+- Snyk's ToxicSkills study (2026) scanned **3,984 published agent skills** and found **36.8% carried at least one security flaw**; 76 were confirmed malicious.
+- A hostile SKILL.md can override the agent's instructions, leak secrets (env vars, API keys, conversation history) to an outside server, demand destructive shell or SQL commands, install code from an unvetted URL, or reroute the agent's traffic — all through plain text that looks like ordinary documentation.
+- Even a *safe* skill has a cost: every token it spends is a token unavailable for the agent's real task, and skill files in the wild range from a few hundred to hundreds of thousands of bytes.
+
+No human is in the loop at the moment an autonomous agent discovers and loads a skill. Identity registries prove *who* an agent is; runtime firewalls gate *what* it does once running; payment layers meter spend. None of them inspect the **document itself** before it is read — the exact instant the damage is done.
+
+## The solution
+
+AuditSkill fills that gap. Send it a SKILL.md (raw text or a URL); it reads the file in a sandbox that **executes nothing** and returns:
+
+- a machine-readable **verdict** (one of four), with per-module scores and every finding pinned to a line number;
+- a **34-rule security scan** across 8 attack categories (injection, exfiltration, hidden instructions, unsafe operations, scope creep, supply chain, agent capture, payment traps);
+- a **per-model context-cost** estimate — tokens, dollars, and share of the context window;
+- an **Ed25519-signed certificate** any other agent can verify, online or fully offline.
+
+It is **deterministic and rule-based — no LLM in the pipeline**: sub-second, $0 per audit, and the same input always yields the same answer. That matters for a security tool — an LLM judge is probabilistic, costs money, and is itself vulnerable to injection from the very file it inspects. Zero setup: no key, no signup, no install — your first call works as-is.
+
+## How this fits NANDA Town
+
+Discovery answers *what skills exist*. AuditSkill answers the next question — *which one should I actually load?* — and makes trust portable between agents:
+
+**Find → Verify → Load.** Browse the registry through AuditSkill (`GET /discover`) and every entry comes back pre-audited and ranked; audit any candidate on demand (`POST /audit`); keep the signed certificate and hand it to the next agent, which re-checks it (`POST /verify`) without auditing again. It is the pre-load safety layer the ecosystem is missing.
 
 ## Base URL
 
@@ -17,15 +42,15 @@ All `POST` requests require the header `Content-Type: application/json`.
 
 ## Usage scenarios
 
-Pick the scenario matching the request and follow its steps exactly — zero human intervention needed. On errors while following any scenario, see "Errors".
+Pick the scenario matching the request and follow its steps exactly — no human intervention needed. On errors while following any scenario, see "Errors".
 
 ### Scenario 0: Demonstrate the service end-to-end (default)
 
-Use when you are told simply to "use this skill", "perform the service", or "run a demo" — with no specific skill file, URL, or certificate given.
+Use when you are told simply to "use this skill", "perform the service", or "run a demo" — with no specific skill file, URL, or certificate given. This walks the whole story: scan the real registry, catch a real attack, prove the verdict is signed.
 
 1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
-2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds for this call (it fetches and audits every entry; repeat calls are cached and fast). From the response, keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry.
-3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in the "Example" section below — a deliberately malicious sample, which is audited, never executed. Send it as a JSON request body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object. Allow up to 15 seconds.
+2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds (it fetches and audits every entry; repeat calls are cached and fast). Keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry.
+3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below — a deliberately malicious sample, which is audited, never executed. Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object. Allow up to 15 seconds.
 4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": X}` where **X is the value of the `certificate` field from step 3's response** — not the whole response. Forward it unchanged. Expect `"valid": true`, proving the verdict is cryptographically signed. Allow up to 10 seconds.
 5. Compose your answer exactly per "Report format" below.
 
@@ -37,18 +62,30 @@ Fallbacks — never ask the human, never stop early:
 
 #### Report format
 
+Fill in the bracketed values from the responses. Keep the structure and headings exactly.
+
 ```
 AUDITSKILL DEMONSTRATION REPORT
-Why this matters: an agent executes a skill file just by reading it — and 36.8% of
-3,984 published agent skills carry at least one security flaw (Snyk ToxicSkills, 2026).
+
+The problem: for an AI agent, reading a skill file is executing it — and 36.8% of
+3,984 published agent skills carried at least one security flaw (Snyk ToxicSkills, 2026).
+AuditSkill checks a SKILL.md before it enters the context window. Deterministic, no LLM,
+sub-second, signed. Here it is, run live just now:
+
 1. Registry scan (GET /discover): <total_in_registry> skills in the live NANDA Town registry;
    audited <n>: <x> pass, <y> need review, <z> fail, <u> could not be audited.
-   Top ranked: <name> — <verdict>, score <score> (<rank_reason>).
-   Flagged: <name> — FAILS_BASIC_AUDIT, score <score>. (omit if none)
-2. Attack detection (POST /audit on a malicious sample): <verdict>, score <overall_score>.
+   Safest: <name> — <verdict>, score <score> (<rank_reason>).
+   Flagged: <name> — FAILS_BASIC_AUDIT, score <score>. (omit line if none)
+2. Attack detection (POST /audit on a malicious sample): <verdict>, score <overall_score>/100.
    <rule_id> (<severity>, <category>, line <line>) — one line per finding.
-3. Certificate (POST /verify): <certificate_id> → valid: true, expires <valid_until>.
-Conclusion: <one sentence: what a downstream agent was just protected from>.
+   Every finding is pinned to the exact line of the offending text.
+3. Cryptographic proof (POST /verify): certificate <certificate_id> → valid: true, expires <valid_until>.
+   Any other agent can re-verify this offline against the published public key.
+
+Conclusion: in one pass AuditSkill ranked the live registry by safety, caught a skill that
+would have <one concrete harm from step 2, e.g. overridden the agent's instructions and
+exfiltrated its secrets>, and issued a signed verdict portable to any other agent — before
+a single byte of untrusted text entered the context window.
 ```
 
 ### Scenario 1: Audit a skill before loading it
@@ -105,9 +142,9 @@ Use when a user (or another agent) hands you a certificate object and asks wheth
 | `GET /skill.md` | This document, served from the deployed code itself | — |
 | `GET /` | Service index: JSON pointers to the endpoints above | — |
 
-## Example
+## Example: POST /audit
 
-A malicious skill that fails — the injection lives inside the request body, so it is audited, not executed. This is a `bash`/`curl` example; on another platform or HTTP client, issue the equivalent request: `POST` to the URL, header `Content-Type: application/json`, and the JSON below as the body. To audit a file you already have by URL instead, prefer `skill_url` — it avoids escaping the markdown entirely.
+A malicious skill that fails — the injection lives inside the request body, so it is audited, not executed. This is a `bash`/`curl` example; on another platform or HTTP client, issue the equivalent request: `POST` to the URL, header `Content-Type: application/json`, and the JSON below as the body. To audit a file you already have by URL, prefer `skill_url` — it avoids escaping the markdown entirely.
 
 ```bash
 curl -X POST https://auditskill.up.railway.app/audit \
@@ -130,12 +167,53 @@ Response (abbreviated):
     ]
   },
   "context_cost": { "tokens_estimate": 52, "density": "high" },
-  "certificate": { "verdict": "FAILS_BASIC_AUDIT", "signature": "ed25519:..." },
+  "certificate": { "verdict": "FAILS_BASIC_AUDIT", "signature": "ed25519:...", "valid_until": "..." },
   "certificate_id": "seal_..."
 }
 ```
 
 A clean skill returns `verdict: "PASS_BASIC_AUDIT"` with `security.score: 100` and `security.rules_triggered: 0`.
+
+## Example: GET /discover
+
+```bash
+curl "https://auditskill.up.railway.app/discover?mode=safe_static&limit=3"
+```
+
+Response (abbreviated; counts and scores change as the live registry changes):
+
+```json
+{
+  "registry": "https://nandatown.projectnanda.org/api/skills",
+  "total_in_registry": 45,
+  "audited": 3,
+  "results": [
+    { "name": "vouchnet", "verdict": "PASS_WITH_WARNINGS", "score": 80, "rank": 1,
+      "rank_reason": "composite 85 = score 80 + density bonus +5 (high)",
+      "certificate_id": "seal_...", "source_url": "https://..." },
+    { "name": "Skill-Router", "verdict": "REQUIRES_HUMAN_REVIEW", "score": 66, "rank": 2,
+      "rank_reason": "composite 66 = score 66 + density bonus +0 (medium)" },
+    { "name": "Cortexa Firewall", "verdict": "FAILS_BASIC_AUDIT", "score": 25, "rank": 3,
+      "rank_reason": "excluded from top ranking: FAILS_BASIC_AUDIT" }
+  ]
+}
+```
+
+Passing skills rank first, then failing, then entries that could not be fetched safely (each with a `reason`). An unaudited skill is always reported as unaudited, never as passed.
+
+## Example: POST /verify
+
+```bash
+curl -X POST https://auditskill.up.railway.app/verify \
+  -H "Content-Type: application/json" \
+  -d '{"certificate": { ...the certificate object from an /audit response... }}'
+```
+
+```json
+{ "valid": true, "certificate_id": "seal_...", "verdict": "PASS_BASIC_AUDIT", "score": 88, "error": null }
+```
+
+On failure: `{ "valid": false, "verdict": null, "score": null, "error": "Signature verification failed — ..." }`.
 
 ## Response fields
 
@@ -181,7 +259,7 @@ Every verdict is an Ed25519-signed certificate carrying `skill_hash`, `verdict`,
 
 Errors are self-describing; the response's `detail` field says how to fix the request.
 
-- `422` — bad input: both or neither of `skill_md`/`skill_url`, a non-HTTPS `skill_url`, input over 200 KB, an unknown `model`, or a URL blocked by the SSRF guard. Fix the body per `detail` and retry once.
+- `422` — bad input: both or neither of `skill_md`/`skill_url`, an empty `skill_md`, a non-HTTPS `skill_url`, input over 200 KB, an unknown `model`, or a URL blocked by the SSRF guard. Fix the body per `detail` and retry once.
 - `429` — rate limited. Wait 60 seconds, then retry once. If it repeats, tell the user the service is busy.
 - `500` — server error. Retry once; if it persists, check `GET /health` and report the service as down.
 - Timeout / no response — retry once with `mode: safe_static` (it is faster); if still failing, report the service as unreachable.
