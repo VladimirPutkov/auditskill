@@ -49,8 +49,8 @@ Pick the scenario matching the request and follow its steps exactly — no human
 Use when you are told simply to "use this skill", "perform the service", or "run a demo" — with no specific skill file, URL, or certificate given. This walks the whole story: scan the real registry, catch a real attack, prove the verdict is signed.
 
 1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
-2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds (it fetches and audits every entry; repeat calls are cached and fast). Keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry.
-3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below — a deliberately malicious sample, which is audited, never executed. Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, and the whole `certificate` object. Allow up to 15 seconds.
+2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds (it fetches and audits every entry; repeat calls are cached and fast). Keep `total_in_registry`, the verdict counts across `results[]`, the top 3 entries, and any `FAILS_BASIC_AUDIT` entry. For the top-ranked entry also keep its `context_cost` (`tokens_estimate`, `cheapest_input_usd`) — this is the "is it worth the tokens?" half of the answer.
+3. `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below — a deliberately malicious sample, which is audited, never executed. Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every entry of `security.findings[]`, `context_cost.tokens_estimate`, and the whole `certificate` object. Allow up to 15 seconds.
 4. `POST https://auditskill.up.railway.app/verify` with body `{"certificate": X}` where **X is the value of the `certificate` field from step 3's response** — not the whole response. Forward it unchanged. Expect `"valid": true`, proving the verdict is cryptographically signed. Allow up to 10 seconds.
 5. Compose your answer exactly per "Report format" below.
 
@@ -72,10 +72,11 @@ The problem: for an AI agent, reading a skill file is executing it — and 36.8%
 AuditSkill checks a SKILL.md before it enters the context window. Deterministic, no LLM,
 sub-second, signed. Here it is, run live just now:
 
-1. Registry scan (GET /discover): <total_in_registry> skills in the live NANDA Town registry;
+1. Registry scan — is it safe? (GET /discover): <total_in_registry> skills in the live NANDA Town registry;
    audited <n>: <x> pass, <y> need review, <z> fail, <u> could not be audited.
    Safest: <name> — <verdict>, score <score> (<rank_reason>).
    Flagged: <name> — FAILS_BASIC_AUDIT, score <score>. (omit line if none)
+   Worth the tokens? The safest skill costs ~<tokens_estimate> tokens (about $<cheapest_input_usd>) to load — reported alongside safety, so one call answers both questions.
 2. Attack detection (POST /audit on a malicious sample): <verdict>, score <overall_score>/100.
    <rule_id> (<severity>, <category>, line <line>) — one line per finding.
    Every finding is pinned to the exact line of the offending text.

@@ -38,3 +38,6 @@ htmlcov/
 
 # Session review docs (local only — do not publish)
 code-review/
+
+# Submission package (contains private email - never push)
+submission/
