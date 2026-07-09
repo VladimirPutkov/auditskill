@@ -185,7 +185,7 @@ Response (abbreviated; counts and scores change as the live registry changes):
 ```json
 {
   "registry": "https://nandatown.projectnanda.org/api/skills",
-  "total_in_registry": 45,
+  "total_in_registry": "<live count>",
   "audited": 3,
   "results": [
     { "name": "vouchnet", "verdict": "PASS_WITH_WARNINGS", "score": 80, "rank": 1,
