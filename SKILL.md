@@ -51,10 +51,14 @@ Use when you are told simply to "use this skill", "perform the service", or "run
 1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
 2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=20` — audits the 20 most recently registered skills in the live NANDA Town registry and returns them ranked best-first. Allow up to 60 seconds (it fetches and audits every entry; repeat calls are cached and fast). Keep, from the response:
    - `total_in_registry` and the verdict counts across `results[]` (how many pass / need review / fail / could not be audited);
-   - the **top** entry — the one you would load: its `name`, `verdict`, `score`, and its `context_cost` fields `tokens_estimate`, `cheapest_input_usd`, `cheapest_model`, `most_expensive_input_usd`, `most_expensive_model`;
+   - the **top** entry — the one you would load: its `name`, `verdict`, `score`, and its `context_cost` fields `tokens_estimate`, `cheapest_input_usd`, `cheapest_model`, `flagship_input_usd`, `flagship_model` (the cost on a frontier model like the one you are running), `most_expensive_input_usd`, `most_expensive_model`;
    - the **worst** entry — pick, among `results[]` with `"audited": true`, the one with the lowest `score` (prefer any `FAILS_BASIC_AUDIT`). Keep its `name` and `source_url`. You will inspect this real registry skill in step 3.
-3. Inspect that worst real skill: `POST https://auditskill.up.railway.app/audit` with body `{"skill_url": "<the worst entry's source_url>", "mode": "safe_static"}`. Allow up to 15 seconds. Keep `verdict`, `overall_score`, every `security.findings[]` entry (`rule_id`, `severity`, `category`, `line`), the top 3 entries of `issues[]` (each has `severity`, `msg`, `module`) — these explain *why* the score is what it is even when there are no security findings — and from `context_cost`: `tokens_estimate`, `density`, and from `per_model[]` both the **cheapest** entry (smallest `input_cost_usd`, with its `model`) and the **most expensive** entry (largest `input_cost_usd`, with its `model`). If the fetch fails (see "Errors"), retry once with the next-lowest audited entry that has a `source_url`; if none work, say so and continue.
-4. Catch a known attack: `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below. **This is a purpose-built test fixture that ships with this skill to demonstrate detection on a definite attack — it is not a registry skill.** Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every `security.findings[]` entry, and the whole `certificate` object. Allow up to 15 seconds.
+3. Inspect that worst real skill: `POST https://auditskill.up.railway.app/audit` with body `{"skill_url": "<the worst entry's source_url>", "mode": "safe_static"}`. Allow up to 15 seconds. Keep `verdict`, `overall_score`, and:
+   - every `security.findings[]` entry (`rule_id`, `severity`, `category`, `line`) — these are actual attack signatures. Note whether the list is empty.
+   - the top 3 entries of `issues[]` (each `severity`, `msg`, `module`) — these explain why the score is low when there are no security findings (they are usually `structure`/`metadata` problems: missing base URL, no description, no examples).
+   - from `context_cost`: `tokens_estimate`, `density`, and from `per_model[]` the **cheapest** entry, the **`claude-opus-4-8`** entry, and the **most expensive** entry (each: `input_cost_usd` + `model`).
+   Classify the worst skill for the report: if `security.findings[]` is non-empty → it is a **security risk** (name the rules). If it is empty → it is **not an attack**; it is flagged as **unreliable / unusable** — an agent cannot depend on it (e.g. no base URL means its endpoints cannot even be called), so it should be kept out of production and fixed by its author, not audited as a threat. If the fetch fails (see "Errors"), retry once with the next-lowest audited entry that has a `source_url`; if none work, say so and continue.
+4. Run the built-in detection self-test: `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below. **This is a mock malicious SKILL.md that ships inside this skill purely to prove the detection engine works on a definite attack — it is not from the registry and is not a real service.** Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every `security.findings[]` entry, and the whole `certificate` object. Allow up to 15 seconds.
 5. Prove it is signed: `POST https://auditskill.up.railway.app/verify` with body `{"certificate": X}` where **X is the value of the `certificate` field from step 4's response** — not the whole response. Forward it unchanged. Expect `"valid": true`. Allow up to 10 seconds.
 6. Compose your answer exactly per "Report format" below.
 
@@ -67,7 +71,7 @@ Fallbacks — never ask the human, never stop early:
 
 #### Report format
 
-Fill in the bracketed values from the responses. Keep the structure and headings exactly. `<M>` is the number of tracked models (see `/benchmarks`; currently 9).
+Fill in the bracketed values from the responses. Keep the four ACT headings and the CONCLUSION exactly; replace every `<...>` placeholder with the real value.
 
 ```
 AUDITSKILL DEMONSTRATION REPORT
@@ -80,41 +84,60 @@ executes nothing, and answers two questions before you load it: is it safe, and 
 worth the tokens? Deterministic, no LLM, sub-second, signed. Run live just now on the
 NANDA Town registry:
 
-1. Is it safe? (GET /discover) — <total_in_registry> skills in the live registry; of <n>
-   audited: <x> pass, <y> need review, <z> fail, <u> could not be fetched.
-   Safest to load: <name> — <verdict>, score <score>.
-   Is it worth the tokens? Loading it costs ~<tokens_estimate> tokens: from
-   <cheapest_input_usd> USD on <cheapest_model> up to <most_expensive_input_usd> USD on
-   <most_expensive_model> (<M> models tracked, including Claude, GPT, Gemini, and Llama).
+ACT 1 - IS IT SAFE? (GET /discover over the live NANDA Town registry)
+   <total_in_registry> skills in the registry; of <n> audited: <x> pass, <y> need review,
+   <z> fail, <u> could not be fetched.
+   Safest to load: <name> - <verdict>, score <score>.
+   Is it worth the tokens? Loading it costs ~<tokens_estimate> tokens - about
+   <flagship_input_usd> USD on <flagship_model> (a frontier model like the one running
+   this), within a range of <cheapest_input_usd> USD on <cheapest_model> to
+   <most_expensive_input_usd> USD on <most_expensive_model> across 9 tracked models
+   (Claude Opus/Sonnet/Haiku/Fable, GPT-4o/4o-mini/o3, Gemini 3, Llama 3.3).
    AuditSkill reports the numbers; the load-or-skip decision stays with you.
 
-2. Riskiest real skill in that sample, inspected (POST /audit on <worst name>, a live
-   registry entry): <verdict>, score <overall_score>/100.
-   <rule_id> (<severity>, <category>, line <line>) — one line per security finding; each
-   pinned to the exact offending line.
-   Why it is flagged: <severity>: <msg> — one line per top issue from issues[] (this is
-   what drove the score, e.g. missing author, no rate-limit docs, non-HTTPS base URL).
-   Cost to load: ~<tokens_estimate> tokens, from <cheapest input_cost_usd> USD on
-   <cheapest model> up to <most_expensive input_cost_usd> USD on <most expensive model>;
-   density <high|medium|low>.
+ACT 2 - WHAT ABOUT THE WORST ONE? (POST /audit on <worst name>, a real registry entry)
+   Verdict: <verdict>, score <overall_score>/100.
+   Security signatures: <either "none - no SEC-* rules triggered, so this is NOT an attack"
+   OR one line per finding: <rule_id> (<severity>, <category>, line <line>)>.
+   Why the low score:
+     - <severity>: <msg> (<module>)
+     - <severity>: <msg> (<module>)
+     - <severity>: <msg> (<module>)
+   Read: <if there were security findings: "this skill is a security risk - do not load
+   it."  If not: "this skill is not an attack, but it is structurally broken / unusable
+   (e.g. no base URL, so its endpoints cannot be called) - an agent cannot depend on it;
+   keep it out of production until its author fixes it.">
+   Cost to load: ~<tokens_estimate> tokens, <flagship_input_usd> USD on <flagship_model>
+   (range <cheapest> to <most_expensive> USD across 9 models); density <high|medium|low>.
 
-3. Known-attack test (POST /audit on a purpose-built sample we ship — not a registry
-   skill): <verdict>, score <overall_score>/100.
-   <rule_id> (<severity>, <category>, line <line>) — one line per finding.
-   The injection sat inside the request body and was audited, never executed.
+ACT 3 - DOES DETECTION ACTUALLY WORK? (POST /audit on the built-in mock attack file)
+   This is a synthetic malicious SKILL.md shipped with AuditSkill - not a registry skill,
+   not a real service - used only to prove the engine catches a definite attack.
+   Verdict: <verdict>, score <overall_score>/100. Findings:
+     - <rule_id> (<severity>, <category>, line <line>)
+     - <rule_id> (<severity>, <category>, line <line>)
+     - <rule_id> (<severity>, <category>, line <line>)
+   The attack text sat inside the request body and was audited, never executed.
 
-4. Cryptographic proof (POST /verify): certificate <certificate_id> → valid: true,
-   expires <valid_until>. Any other agent can re-verify this offline against the published
-   public key — trust that travels between agents without re-auditing.
+ACT 4 - CAN OTHER AGENTS TRUST THIS? (POST /verify)
+   Certificate <certificate_id> -> valid: true, expires <valid_until>.
+   Any other agent re-verifies this offline against the published public key - trust
+   travels between agents without re-auditing.
 
-Conclusion: in a single pass over the live registry, AuditSkill ranked every skill by
-safety and by context cost, inspected the riskiest real listing down to the offending
-line, caught a known-malicious sample cold, and issued a portable signed verdict — all
-before one byte of untrusted text entered the context window. For an autonomous agent,
-reading a skill is executing it: identity registries say who a skill's author is, runtime
-firewalls watch what a running agent does, but nothing else checks the document itself at
-the one moment that decides everything — just before it is read. That is the gap
-AuditSkill closes, and why an agent that loads skills at runtime needs it.
+CONCLUSION
+   That was Scenario 0, the built-in demo, run end to end with no human input: AuditSkill
+   scanned the live registry and ranked every skill by safety and by token cost (Act 1),
+   inspected the worst real listing and said plainly whether it is an attack or just
+   unusable (Act 2), proved on a mock file that it catches a real injection down to the
+   line (Act 3), and issued a portable signed verdict any agent can check offline (Act 4).
+   Why it matters: for an autonomous agent, reading a skill is executing it - identity
+   registries say who an author is and runtime firewalls watch a running agent, but nothing
+   else checks the document itself at the one moment that decides everything, just before
+   it is read. AuditSkill closes that gap.
+   Keep using it: POST /audit (or GET /audit) to vet any specific SKILL.md before you load
+   it; GET /discover to browse the registry pre-audited; POST /verify or the offline key at
+   GET /.well-known/auditskill-keys to check a certificate; GET /certificates?skill_hash=
+   to reuse a prior verdict; GET /benchmarks for the exact scoring rules.
 ```
 
 ### Scenario 1: Audit a skill before loading it
@@ -222,7 +245,8 @@ Response (abbreviated; counts and scores change as the live registry changes):
       "certificate_id": "seal_...", "source_url": "https://...",
       "context_cost": { "tokens_estimate": 2426, "density": "high",
         "cheapest_input_usd": 0.000393, "cheapest_model": "gpt-4o-mini",
-        "most_expensive_input_usd": 0.026222, "most_expensive_model": "gemini-3" } },
+        "flagship_input_usd": 0.012132, "flagship_model": "claude-opus-4-8",
+        "most_expensive_input_usd": 0.033965, "most_expensive_model": "gemini-3" } },
     { "name": "Skill-Router", "verdict": "REQUIRES_HUMAN_REVIEW", "score": 66, "rank": 2,
       "rank_reason": "composite 66 = score 66 + density bonus +0 (medium)" },
     { "name": "Cortexa Firewall", "verdict": "FAILS_BASIC_AUDIT", "score": 25, "rank": 3,

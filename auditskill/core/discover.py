@@ -38,6 +38,11 @@ _PER_AUDIT_TIMEOUT = 20.0
 DENSITY_BONUS: dict[str, int] = {"high": 5, "medium": 0, "low": -5}
 _FAILS = "FAILS_BASIC_AUDIT"
 
+# Frontier flagship whose cost is surfaced in the compact /discover summary —
+# the model class that actually loads skills at runtime, so an agent sees the
+# cost on "its own" tier alongside the cheapest/most-expensive extremes.
+_FLAGSHIP_MODEL = "claude-opus-4-8"
+
 
 def _matches_query(entry: dict[str, Any], q: str) -> bool:
     """Case-insensitive substring match over name/description/tags/author."""
@@ -119,11 +124,19 @@ async def _audit_entry(
     cc = result.context_cost
     cheapest_entry = min(cc.per_model, key=lambda c: c.input_cost_usd, default=None)
     priciest_entry = max(cc.per_model, key=lambda c: c.input_cost_usd, default=None)
+    # Also surface the cost on a frontier flagship (Claude Opus) — the class of
+    # model that actually loads skills at runtime — so the "what will this cost
+    # ME" number is present, not just the extremes of the tracked range.
+    flagship_entry = next(
+        (c for c in cc.per_model if c.model == _FLAGSHIP_MODEL), None
+    )
     base.context_cost = {
         "tokens_estimate": cc.tokens_estimate,
         "density": cc.density,
         "cheapest_input_usd": cheapest_entry.input_cost_usd if cheapest_entry else None,
         "cheapest_model": cheapest_entry.model if cheapest_entry else None,
+        "flagship_input_usd": flagship_entry.input_cost_usd if flagship_entry else None,
+        "flagship_model": flagship_entry.model if flagship_entry else None,
         "most_expensive_input_usd": priciest_entry.input_cost_usd if priciest_entry else None,
         "most_expensive_model": priciest_entry.model if priciest_entry else None,
     }
