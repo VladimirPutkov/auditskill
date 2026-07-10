@@ -134,9 +134,7 @@ async def check_metadata(
     repo_url = _find_repo_url(text)
     has_repo_url = repo_url is not None
     license_detected = _detect_license(text)
-    base_url_https = (
-        parsed.base_url.startswith("https://") if parsed.base_url else False
-    )
+    base_url_https = parsed.base_url.startswith("https://") if parsed.base_url else False
 
     # Reachability is only probed in liveness mode.
     repo_reachable: bool | None = None
@@ -144,28 +142,24 @@ async def check_metadata(
         repo_reachable = await _check_repo_reachable(repo_url)
 
     # --- Scoring ---
-    any_signal_found = any(
-        [has_author, has_contact, has_repo_url, license_detected, base_url_https]
-    )
-
-    if not any_signal_found:
-        # Give a neutral baseline so closed-source skills aren't punished.
-        score = _BASELINE_SCORE
-    else:
-        score = 0
-        if has_author:
-            score += _WEIGHT_AUTHOR
-        if has_contact:
-            score += _WEIGHT_CONTACT
-        if has_repo_url:
-            score += _WEIGHT_REPO_PRESENT
-            if repo_reachable:
-                score += _WEIGHT_REPO_REACHABLE
-        if license_detected:
-            score += _WEIGHT_LICENSE
-        if base_url_https:
-            score += _WEIGHT_HTTPS
-        score = min(100, score)
+    score = 0
+    if has_author:
+        score += _WEIGHT_AUTHOR
+    if has_contact:
+        score += _WEIGHT_CONTACT
+    if has_repo_url:
+        score += _WEIGHT_REPO_PRESENT
+        if repo_reachable:
+            score += _WEIGHT_REPO_REACHABLE
+    if license_detected:
+        score += _WEIGHT_LICENSE
+    if base_url_https:
+        score += _WEIGHT_HTTPS
+    # Baseline is a FLOOR, not an alternative branch: with no signals the score
+    # is the neutral baseline (closed-source skills aren't punished), and adding
+    # any signal can only raise it — never drop it below baseline (which the old
+    # "empty = 50 else sum" logic did, e.g. HTTPS-only scored 20 < 50).
+    score = min(100, max(_BASELINE_SCORE, score))
 
     findings: list[str] = []
     if not has_author:

@@ -1,3 +1,9 @@
+> **HISTORICAL / INTERNAL LOG — not the current state.** This is an early audit
+> diary kept for provenance. Findings here have since been resolved and the code
+> has moved on through several review passes. For the authoritative current state
+> see the `code-review/` change reports and `pytest -q` (all green). Not part of
+> the judged SkillMD or PR deliverable.
+
 # AUDIT_FINDINGS — first-principles audit, 2026-07-04
 
 > **Status update, 2026-07-07:** all "Flagged for you" items below are resolved —

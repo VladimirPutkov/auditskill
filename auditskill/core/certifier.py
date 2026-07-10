@@ -52,6 +52,7 @@ def get_public_key() -> str:
             )
     return os.environ.get("AUDITSKILL_PUBLIC_KEY", "")
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -85,9 +86,7 @@ def _build_limitations(mode: str) -> list[str]:
     if mode == "safe_static":
         limitations.append("Endpoints were not tested - liveness unknown")
     if mode == "liveness":
-        limitations.append(
-            "State-changing endpoints (POST/PUT/DELETE) were not executed"
-        )
+        limitations.append("State-changing endpoints (POST/PUT/DELETE) were not executed")
     return limitations
 
 
@@ -132,9 +131,7 @@ def create_certificate(
     now = datetime.now(timezone.utc)
     certificate_id = f"seal_{secrets.token_hex(6)}"
     tested_at = now.isoformat().replace("+00:00", "Z")
-    valid_until = (now + timedelta(days=CERT_VALIDITY_DAYS)).isoformat().replace(
-        "+00:00", "Z"
-    )
+    valid_until = (now + timedelta(days=CERT_VALIDITY_DAYS)).isoformat().replace("+00:00", "Z")
 
     checks: dict[str, str] = {
         "structure": _score_to_status(structure_score),

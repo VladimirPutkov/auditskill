@@ -44,6 +44,7 @@ MAX_ENDPOINTS: int = 15
 # Internal helpers
 # ------------------------------------------------------------------
 
+
 def _build_url(base_url: str, path: str) -> str:
     """Combine *base_url* and *path*, normalising duplicate slashes."""
     base = base_url.rstrip("/")
@@ -85,22 +86,37 @@ async def _probe_single(
     except SSRFBlockedError as exc:
         latency_ms = round((time.monotonic() - start) * 1000, 1)
         return EndpointResult(
-            url=url, method=method, status=None, latency_ms=latency_ms,
-            tls=tls, content_type=None, valid_json=False,
+            url=url,
+            method=method,
+            status=None,
+            latency_ms=latency_ms,
+            tls=tls,
+            content_type=None,
+            valid_json=False,
             error=f"SSRF blocked: {exc}",
         )
     except httpx.TimeoutException:
         latency_ms = round((time.monotonic() - start) * 1000, 1)
         return EndpointResult(
-            url=url, method=method, status=None, latency_ms=latency_ms,
-            tls=tls, content_type=None, valid_json=False,
+            url=url,
+            method=method,
+            status=None,
+            latency_ms=latency_ms,
+            tls=tls,
+            content_type=None,
+            valid_json=False,
             error=f"Timeout after {timeout}s",
         )
     except Exception as exc:  # noqa: BLE001
         latency_ms = round((time.monotonic() - start) * 1000, 1)
         return EndpointResult(
-            url=url, method=method, status=None, latency_ms=latency_ms,
-            tls=tls, content_type=None, valid_json=False,
+            url=url,
+            method=method,
+            status=None,
+            latency_ms=latency_ms,
+            tls=tls,
+            content_type=None,
+            valid_json=False,
             error=str(exc),
         )
 
@@ -113,6 +129,7 @@ def _is_dead(r: EndpointResult) -> bool:
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
+
 
 async def test_endpoints(
     endpoints: list[ParsedEndpoint],
@@ -141,8 +158,14 @@ async def test_endpoints(
         for ep in endpoints:
             skipped.append(SkippedEndpoint(path=ep.path, method=ep.method, reason=reason))
         return LivenessReport(
-            score=None, tested=0, alive=0, dead=0,
-            avg_latency_ms=None, results=[], skipped=skipped, findings=[],
+            score=None,
+            tested=0,
+            alive=0,
+            dead=0,
+            avg_latency_ms=None,
+            results=[],
+            skipped=skipped,
+            findings=[],
         )
 
     # ---- Classify endpoints into testable vs skipped ----
@@ -150,24 +173,36 @@ async def test_endpoints(
     for ep in endpoints:
         method_upper = ep.method.upper()
         if method_upper not in _SAFE_METHODS:
-            skipped.append(SkippedEndpoint(
-                path=ep.path, method=ep.method,
-                reason="State-changing method not executed in liveness mode",
-            ))
+            skipped.append(
+                SkippedEndpoint(
+                    path=ep.path,
+                    method=ep.method,
+                    reason="State-changing method not executed in liveness mode",
+                )
+            )
             continue
         if len(to_test) >= MAX_ENDPOINTS:
-            skipped.append(SkippedEndpoint(
-                path=ep.path, method=ep.method,
-                reason=f"Endpoint cap reached (max {MAX_ENDPOINTS} probed per audit)",
-            ))
+            skipped.append(
+                SkippedEndpoint(
+                    path=ep.path,
+                    method=ep.method,
+                    reason=f"Endpoint cap reached (max {MAX_ENDPOINTS} probed per audit)",
+                )
+            )
             continue
         to_test.append((method_upper, _build_url(base_url, ep.path)))
 
     # If everything was skipped (no safe methods / cap):
     if not to_test:
         return LivenessReport(
-            score=None, tested=0, alive=0, dead=0,
-            avg_latency_ms=None, results=[], skipped=skipped, findings=[],
+            score=None,
+            tested=0,
+            alive=0,
+            dead=0,
+            avg_latency_ms=None,
+            results=[],
+            skipped=skipped,
+            findings=[],
         )
 
     # ---- Concurrent probing ----

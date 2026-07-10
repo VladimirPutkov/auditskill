@@ -51,9 +51,7 @@ app = FastAPI(
 app.state.limiter = limiter
 # slowapi's handler is typed narrowly (RateLimitExceeded, not Exception);
 # it is only ever invoked for that exception class, so the cast is safe.
-app.add_exception_handler(
-    RateLimitExceeded, cast(ExceptionHandler, _rate_limit_exceeded_handler)
-)
+app.add_exception_handler(RateLimitExceeded, cast(ExceptionHandler, _rate_limit_exceeded_handler))
 
 # --- CORS ---
 app.add_middleware(

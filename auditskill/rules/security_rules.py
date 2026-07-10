@@ -36,6 +36,7 @@ def _compile(pattern: str) -> re.Pattern[str]:
     """
     return re.compile(pattern, re.IGNORECASE)
 
+
 # ---------------------------------------------------------------------------
 # Rule dataclass
 # ---------------------------------------------------------------------------
@@ -182,9 +183,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
         rule_id="SEC-007",
         category="data_exfiltration",
         severity="critical",
-        pattern=(
-            r"(upload\s+.*environment|transmit\s+.*logs|forward\s+.*credentials)"
-        ),
+        pattern=(r"(upload\s+.*environment|transmit\s+.*logs|forward\s+.*credentials)"),
         description=(
             "Detects instructions to upload environment variables, "
             "transmit logs, or forward credentials externally."
@@ -201,7 +200,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
         ),
         description=(
             "Detects HTTP POST bodies that carry sensitive values as "
-            "key/value pairs (api_key=, \"token\":, password=…).  An "
+            'key/value pairs (api_key=, "token":, password=…).  An '
             "endpoint path like 'POST /auth/token' no longer false-fires."
         ),
         is_code_block_safe=False,
@@ -212,8 +211,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
         severity="critical",
         pattern=r"(exfiltrate|phone\s*home|callback\s+.*external)",
         description=(
-            "Detects explicit exfiltration language or phone-home / "
-            "external-callback patterns."
+            "Detects explicit exfiltration language or phone-home / external-callback patterns."
         ),
         is_code_block_safe=False,
     ),
@@ -274,8 +272,7 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
         severity="high",
         pattern=r"(DROP\s+TABLE|TRUNCATE\s+TABLE|DELETE\s+FROM\s+.*WHERE\s+1)",
         description=(
-            "Detects destructive SQL statements (DROP TABLE, TRUNCATE, "
-            "unconditional DELETE)."
+            "Detects destructive SQL statements (DROP TABLE, TRUNCATE, unconditional DELETE)."
         ),
         is_code_block_safe=False,
     ),

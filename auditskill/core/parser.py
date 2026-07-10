@@ -84,6 +84,7 @@ def _sanitize_text(value: str | None, *, max_len: int = 300) -> str | None:
         cleaned = cleaned[:max_len].rstrip() + "…"
     return cleaned or None
 
+
 # Auth type patterns (for auth_type field)
 _AUTH_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("bearer", re.compile(r"bearer\s+token|authorization:\s*bearer", re.IGNORECASE)),
@@ -185,7 +186,7 @@ def _extract_name_description(raw_text: str) -> tuple[str | None, str | None]:
 
     # First prose paragraph after the H1 → description.
     if description is None and h1_idx is not None:
-        for line in lines[h1_idx + 1:]:
+        for line in lines[h1_idx + 1 :]:
             s = line.strip()
             if not s:
                 continue

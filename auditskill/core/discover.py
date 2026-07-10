@@ -18,6 +18,7 @@ import logging
 from typing import Any
 
 from auditskill.api.models import DiscoverResponse, DiscoverResult
+from auditskill.core import security_scanner
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
 from auditskill.core.ssrf_guard import safe_request
 from auditskill.db.store import AuditStore
@@ -42,6 +43,19 @@ _FAILS = "FAILS_BASIC_AUDIT"
 # the model class that actually loads skills at runtime, so an agent sees the
 # cost on "its own" tier alongside the cheapest/most-expensive extremes.
 _FLAGSHIP_MODEL = "claude-opus-4-8"
+
+
+_VERDICT_SEVERITY_RANK: dict[str, int] = {
+    "PASS_BASIC_AUDIT": 0,
+    "PASS_WITH_WARNINGS": 1,
+    "REQUIRES_HUMAN_REVIEW": 2,
+    "FAILS_BASIC_AUDIT": 3,
+}
+
+
+def _verdict_rank(verdict: str | None) -> int:
+    """Higher = more severe.  Used to downgrade-only when metadata is poisoned."""
+    return _VERDICT_SEVERITY_RANK.get(verdict or "", 0)
 
 
 def _matches_query(entry: dict[str, Any], q: str) -> bool:
@@ -106,12 +120,37 @@ async def _audit_entry(
         base.reason = f"Audit error ({type(exc).__name__}): {exc}"
         return base
 
-    critical = sum(1 for f in result.security.findings if f.severity == "critical")
+    # The registry-supplied metadata (name/author/description/tags) is echoed
+    # back to the agent, so it is itself an injection-delivery surface.  Scan
+    # it too and fold any hit into the verdict — an unaudited registry blurb
+    # must never reach the agent as "pre-vetted" while carrying an injection.
+    meta_text = "\n".join(
+        str(entry.get(k) or "") for k in ("name", "author", "description", "tags")
+    )
+    meta_report = security_scanner.scan(meta_text)
+    meta_findings = [f for f in meta_report.findings if f.severity in ("critical", "high")]
+
+    all_findings = list(result.security.findings) + meta_findings
+    critical = sum(1 for f in all_findings if f.severity == "critical")
     base.audited = True
     base.verdict = result.verdict
     base.score = result.overall_score
     base.risk_level = result.security.risk_level
     base.critical_findings = critical
+
+    if meta_findings:
+        # Downgrade only (never upgrade): poisoned metadata forces at least
+        # human-review, and a critical hit fails outright — regardless of the
+        # document score.
+        forced = "FAILS_BASIC_AUDIT" if critical else "REQUIRES_HUMAN_REVIEW"
+        if _verdict_rank(forced) > _verdict_rank(base.verdict):
+            base.verdict = forced
+        base.reason = (
+            f"Registry metadata contains a {'critical' if critical else 'high'}-"
+            f"severity pattern ({meta_findings[0].rule_id}: "
+            f"{meta_findings[0].category}); treated as unsafe even though the "
+            "linked document scored higher."
+        )
     base.skill_hash = result.skill_hash
     base.certificate_id = result.certificate_id
     base.cached = result.cached
@@ -127,9 +166,7 @@ async def _audit_entry(
     # Also surface the cost on a frontier flagship (Claude Opus) — the class of
     # model that actually loads skills at runtime — so the "what will this cost
     # ME" number is present, not just the extremes of the tracked range.
-    flagship_entry = next(
-        (c for c in cc.per_model if c.model == _FLAGSHIP_MODEL), None
-    )
+    flagship_entry = next((c for c in cc.per_model if c.model == _FLAGSHIP_MODEL), None)
     base.context_cost = {
         "tokens_estimate": cc.tokens_estimate,
         "density": cc.density,
@@ -148,6 +185,16 @@ async def _audit_entry(
 # ---------------------------------------------------------------------------
 
 
+# Safety tiers — a stronger verdict ALWAYS ranks above a weaker one, whatever
+# the density bonus.  Density only breaks ties *within* a verdict tier, so a
+# PASS_WITH_WARNINGS can never outrank a PASS_BASIC_AUDIT on density alone.
+_VERDICT_TIER: dict[str, int] = {
+    "PASS_BASIC_AUDIT": 0,
+    "PASS_WITH_WARNINGS": 1,
+    "REQUIRES_HUMAN_REVIEW": 2,
+}
+
+
 def _composite(r: DiscoverResult) -> int:
     density = (r.context_cost or {}).get("density")
     return (r.score or 0) + DENSITY_BONUS.get(str(density or ""), 0)
@@ -157,8 +204,10 @@ def rank_results(results: list[DiscoverResult]) -> list[DiscoverResult]:
     """Order results best-first and attach ``rank`` / ``rank_reason``.
 
     Buckets (never mixed): passing audits → failing audits → unaudited.
-    Within the passing bucket: composite desc, then score desc, then fewer
-    critical findings, then name — fully deterministic.
+    Within the passing bucket the primary key is the **verdict tier**
+    (PASS_BASIC_AUDIT before PASS_WITH_WARNINGS before REQUIRES_HUMAN_REVIEW);
+    only *within* one tier does density-adjusted composite, then score, then
+    fewer critical findings, then name, break the tie — fully deterministic.
     """
     passing = [r for r in results if r.audited and r.verdict != _FAILS]
     failing = [r for r in results if r.audited and r.verdict == _FAILS]
@@ -166,6 +215,7 @@ def rank_results(results: list[DiscoverResult]) -> list[DiscoverResult]:
 
     passing.sort(
         key=lambda r: (
+            _VERDICT_TIER.get(r.verdict or "", 9),
             -_composite(r),
             -(r.score or 0),
             r.critical_findings,
@@ -178,7 +228,7 @@ def rank_results(results: list[DiscoverResult]) -> list[DiscoverResult]:
         density = (r.context_cost or {}).get("density")
         bonus = DENSITY_BONUS.get(str(density or ""), 0)
         r.rank_reason = (
-            f"composite {_composite(r)} = score {r.score} "
+            f"{r.verdict} tier; composite {_composite(r)} = score {r.score} "
             f"+ density bonus {bonus:+d} ({density or 'unknown'})"
         )
     for r in failing:
@@ -237,9 +287,7 @@ async def discover(
             f"({type(exc).__name__}). Fix: point registry_url at a "
             "NANDA-style JSON registry endpoint."
         ) from exc
-    skills: list[dict[str, Any]] = (
-        payload.get("skills", []) if isinstance(payload, dict) else []
-    )
+    skills: list[dict[str, Any]] = payload.get("skills", []) if isinstance(payload, dict) else []
     total = len(skills)
 
     # De-duplicate by (name, source_url) so the registry's repeat submissions

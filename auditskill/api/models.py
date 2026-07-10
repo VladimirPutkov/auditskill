@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 # Size constants
 # ---------------------------------------------------------------------------
 
-_MAX_SKILL_MD_CHARS = 200 * 1024  # 200 KiB of text
+_MAX_SKILL_MD_BYTES = 200 * 1024  # 200 KiB, measured as UTF-8 bytes
 
 
 # ---------------------------------------------------------------------------
@@ -39,8 +39,11 @@ class AuditRequest(BaseModel):
         description="HTTPS URL to fetch the SKILL.md from.",
     )
     mode: Literal["safe_static", "liveness"] = Field(
-        default="liveness",
-        description="Audit mode: 'safe_static' skips live endpoint probing.",
+        default="safe_static",
+        description=(
+            "Audit mode. 'safe_static' (default) does document analysis only. "
+            "'liveness' additionally sends GET/HEAD probes to declared endpoints."
+        ),
     )
     model: str | None = Field(
         default=None,
@@ -58,16 +61,12 @@ class AuditRequest(BaseModel):
 
         if has_md == has_url:
             # Both set or neither set
-            raise ValueError(
-                "Exactly one of 'skill_md' or 'skill_url' must be provided."
-            )
+            raise ValueError("Exactly one of 'skill_md' or 'skill_url' must be provided.")
 
         if has_url:
             assert self.skill_url is not None  # for type narrowing
             if not self.skill_url.startswith("https://"):
-                raise ValueError(
-                    "skill_url must use HTTPS (start with 'https://')."
-                )
+                raise ValueError("skill_url must use HTTPS (start with 'https://').")
 
         if has_md:
             assert self.skill_md is not None  # for type narrowing
@@ -76,11 +75,12 @@ class AuditRequest(BaseModel):
                     "skill_md was provided but is empty. Send the SKILL.md text "
                     "in 'skill_md', or use 'skill_url' to fetch it by URL."
                 )
-            if len(self.skill_md) > _MAX_SKILL_MD_CHARS:
+            n_bytes = len(self.skill_md.encode("utf-8"))
+            if n_bytes > _MAX_SKILL_MD_BYTES:
                 raise ValueError(
-                    f"skill_md exceeds maximum length of "
-                    f"{_MAX_SKILL_MD_CHARS:,} characters "
-                    f"(got {len(self.skill_md):,})."
+                    f"skill_md exceeds maximum size of "
+                    f"{_MAX_SKILL_MD_BYTES:,} bytes "
+                    f"(got {n_bytes:,} UTF-8 bytes)."
                 )
 
         return self
@@ -399,10 +399,22 @@ class AuditResponse(BaseModel):
 class VerifyResponse(BaseModel):
     """Response from certificate verification."""
 
-    valid: bool
+    valid: bool = Field(
+        ...,
+        description="True only if the Ed25519 signature is authentic AND the certificate has not expired.",
+    )
+    signature_valid: bool = Field(
+        default=False,
+        description="True if the signature alone is authentic (regardless of expiry).",
+    )
+    expired: bool | None = Field(
+        default=None,
+        description="True if valid_until is in the past; null if no signature to check.",
+    )
     certificate_id: str | None = None
     verdict: str | None = None
     score: int | None = None
+    valid_until: str | None = None
     error: str | None = None
 
 

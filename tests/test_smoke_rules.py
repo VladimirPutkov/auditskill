@@ -4,6 +4,7 @@ Verifies that all 34 SEC-* rules match their expected trigger text,
 and that known false-positive shapes do NOT match.
 This is the pytest replacement for the old print-only smoke_rules.py.
 """
+
 import re
 
 import pytest

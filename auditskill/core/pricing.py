@@ -59,16 +59,16 @@ class ModelPrice:
 # AuditSkill's own maintained price table: input $/1k tokens and context
 # window (in thousands of tokens).  Self-contained — no external feed.
 # Hand-verified as_of the date below; update this table when prices change.
-_FALLBACK_AS_OF = "2026-07-04"
+_FALLBACK_AS_OF = "2026-07-09"
 _FALLBACK_PRICES: dict[str, ModelPrice] = {
     "claude-fable-5": ModelPrice("claude-fable-5", "claude", 0.01, 1000),
     "claude-opus-4-8": ModelPrice("claude-opus-4-8", "claude", 0.005, 1000),
     "claude-sonnet-5": ModelPrice("claude-sonnet-5", "claude", 0.003, 1000),
     "claude-haiku-4-5": ModelPrice("claude-haiku-4-5", "claude", 0.001, 200),
-    "gemini-3": ModelPrice("gemini-3", "gemini", 0.014, 1000),
+    "gemini-3": ModelPrice("gemini-3", "gemini", 0.002, 1000),
     "gpt-4o": ModelPrice("gpt-4o", "openai", 0.0025, 128),
     "gpt-4o-mini": ModelPrice("gpt-4o-mini", "openai", 0.00015, 128),
-    "o3": ModelPrice("o3", "openai", 0.01, 200),
+    "o3": ModelPrice("o3", "openai", 0.002, 200),
     "meta-llama/Llama-3.3-70B-Instruct-Turbo": ModelPrice(
         "meta-llama/Llama-3.3-70B-Instruct-Turbo", "llama", 0.00088, 128
     ),

@@ -9,6 +9,7 @@ served at /.well-known/auditskill-keys for offline verification).
 Usage:
     python scripts/generate_keys.py
 """
+
 from __future__ import annotations
 
 import datetime

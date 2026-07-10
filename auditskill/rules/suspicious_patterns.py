@@ -40,7 +40,7 @@ IP_URL_PATTERN: re.Pattern[str] = re.compile(
     r"("
     r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"  # IPv4
     r"|"
-    r"\[[\da-fA-F:]+\]"                      # IPv6 in brackets
+    r"\[[\da-fA-F:]+\]"  # IPv6 in brackets
     r")"
     r"(:\d+)?(/|$)",
     re.IGNORECASE,
@@ -62,10 +62,7 @@ NON_HTTPS_PATTERN: re.Pattern[str] = re.compile(
 MISMATCH_PATTERNS: dict[str, dict[str, set[str] | str]] = {
     "read-only": {
         "methods": {"DELETE", "PUT", "PATCH", "POST"},
-        "reason": (
-            "Description claims read-only access but exposes "
-            "write/mutating HTTP methods"
-        ),
+        "reason": ("Description claims read-only access but exposes write/mutating HTTP methods"),
     },
     "no auth": {
         "methods": set(),  # checked via header inspection instead
@@ -77,16 +74,12 @@ MISMATCH_PATTERNS: dict[str, dict[str, set[str] | str]] = {
     },
     "safe": {
         "methods": {"DELETE", "PUT", "PATCH"},
-        "reason": (
-            "Description claims safe operations but exposes "
-            "mutating HTTP methods"
-        ),
+        "reason": ("Description claims safe operations but exposes mutating HTTP methods"),
     },
     "idempotent": {
         "methods": {"POST"},
         "reason": (
-            "Description claims idempotent behaviour but exposes "
-            "non-idempotent POST endpoints"
+            "Description claims idempotent behaviour but exposes non-idempotent POST endpoints"
         ),
     },
 }
@@ -124,9 +117,7 @@ def check_url_suspicion(url: str) -> list[str]:
     if "." in hostname:
         tld = "." + hostname.rsplit(".", maxsplit=1)[-1]
         if tld.lower() in SUSPICIOUS_TLDS:
-            reasons.append(
-                f"Uses suspicious/abuse-prone TLD '{tld}'"
-            )
+            reasons.append(f"Uses suspicious/abuse-prone TLD '{tld}'")
 
     # --- Bare IP check ---
     if IP_URL_PATTERN.search(url):
@@ -177,8 +168,7 @@ def check_method_mismatch(
                 method = ep.get("method", "").upper()
                 if method in contradictory_methods:
                     mismatches.append(
-                        f"{reason} (found {method} on "
-                        f"{ep.get('path', 'unknown endpoint')})"
+                        f"{reason} (found {method} on {ep.get('path', 'unknown endpoint')})"
                     )
 
         # Header-level mismatch (e.g. "no auth" + Authorization header)
@@ -186,8 +176,6 @@ def check_method_mismatch(
             for ep in endpoints:
                 headers_str = ep.get("headers", "").lower()
                 if header_keyword in headers_str:
-                    mismatches.append(
-                        f"{reason} (found in {ep.get('path', 'unknown endpoint')})"
-                    )
+                    mismatches.append(f"{reason} (found in {ep.get('path', 'unknown endpoint')})")
 
     return mismatches

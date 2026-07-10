@@ -60,11 +60,11 @@ _VALID_MODES = ("safe_static", "liveness")
 
 # Context-cost density thresholds.
 # A "useful token" is estimated from endpoint count, examples, and structure.
-_TOKEN_HIGH_DENSITY_THRESHOLD = 0.08   # ≥8% of tokens map to useful info
-_TOKEN_LOW_DENSITY_THRESHOLD = 0.03    # <3% → bloated
-_TOKENS_LARGE_SKILL = 3000             # above this, flag as large
-_FETCH_TIMEOUT = 10.0                  # generous timeout for SKILL.md downloads
-                                       # (free-tier hosts need cold-start time)
+_TOKEN_HIGH_DENSITY_THRESHOLD = 0.08  # ≥8% of tokens map to useful info
+_TOKEN_LOW_DENSITY_THRESHOLD = 0.03  # <3% → bloated
+_TOKENS_LARGE_SKILL = 3000  # above this, flag as large
+_FETCH_TIMEOUT = 10.0  # generous timeout for SKILL.md downloads
+# (free-tier hosts need cold-start time)
 
 _SEVERITY_ORDER: dict[str, int] = {
     "critical": 0,
@@ -417,27 +417,21 @@ def _estimate_context_cost(
             "(endpoints, examples, documentation sections). Consider whether you need it."
         )
     if density == "high" and tokens <= _TOKENS_LARGE_SKILL:
-        parts.append(
-            "Compact and well-structured. Low context-window cost."
-        )
+        parts.append("Compact and well-structured. Low context-window cost.")
     if not parts:
         parts.append("Moderate size and density. Reasonable context-window cost.")
 
     # Per-model tokens + input cost (USD) + window share.  Reads the in-memory
     # price snapshot only — never touches the network (safe_static invariant).
     try:
-        per_model, price_source = pricing.estimate_for_models(
-            ascii_chars, non_ascii_chars
-        )
+        per_model, price_source = pricing.estimate_for_models(ascii_chars, non_ascii_chars)
     except Exception:  # noqa: BLE001 — pricing must never break an audit
         logger.exception("Per-model cost estimation failed; returning base estimate")
         per_model, price_source = [], None
 
     if per_model:
         max_cost = max(c.input_cost_usd for c in per_model)
-        parts.append(
-            f"Loading costs at most ${max_cost:.4f} (input) on tracked models."
-        )
+        parts.append(f"Loading costs at most ${max_cost:.4f} (input) on tracked models.")
 
     return ContextCost(
         tokens_estimate=tokens,
@@ -535,13 +529,15 @@ async def _fetch_one(url: str) -> str:
         raise ValueError(f"HTTP {response.status_code} from {url}")
 
     content_type = response.headers.get("content-type", "")
-    if not any(
-        ct in content_type
-        for ct in ("text/", "application/yaml", "application/json", "application/octet-stream")
-    ) and content_type:
+    if (
+        not any(
+            ct in content_type
+            for ct in ("text/", "application/yaml", "application/json", "application/octet-stream")
+        )
+        and content_type
+    ):
         raise ValueError(
-            f"Unexpected content type from {url}: {content_type!r} "
-            "(expected text, YAML, or JSON)"
+            f"Unexpected content type from {url}: {content_type!r} (expected text, YAML, or JSON)"
         )
 
     if len(response.content) > _MAX_SKILL_BYTES:
@@ -553,8 +549,6 @@ async def _fetch_one(url: str) -> str:
     # octet-stream is allowed (many hosts serve .md as binary), but reject
     # actual binary payloads: a NUL byte means this is not a text SKILL.md.
     if b"\x00" in response.content:
-        raise ValueError(
-            f"Content from {url} appears to be binary, not a text SKILL.md"
-        )
+        raise ValueError(f"Content from {url} appears to be binary, not a text SKILL.md")
 
     return response.text

@@ -73,17 +73,45 @@ _ZERO_WIDTH_RE = re.compile(r"[​‌‍﻿⁠⁢⁣⁤]")
 # Common Cyrillic/Greek homoglyphs → their Latin lookalike.
 _CONFUSABLES: dict[str, str] = {
     # Cyrillic lowercase
-    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c",
-    "х": "x", "у": "y", "і": "i", "ј": "j", "ѕ": "s",
-    "к": "k", "м": "m", "т": "t", "н": "h", "в": "b",
-    "г": "r", "п": "n",
+    "а": "a",
+    "е": "e",
+    "о": "o",
+    "р": "p",
+    "с": "c",
+    "х": "x",
+    "у": "y",
+    "і": "i",
+    "ј": "j",
+    "ѕ": "s",
+    "к": "k",
+    "м": "m",
+    "т": "t",
+    "н": "h",
+    "в": "b",
+    "г": "r",
+    "п": "n",
     # Cyrillic uppercase
-    "А": "A", "Е": "E", "О": "O", "Р": "P", "С": "C",
-    "Х": "X", "У": "Y", "К": "K", "М": "M", "Т": "T",
-    "Н": "H", "В": "B",
+    "А": "A",
+    "Е": "E",
+    "О": "O",
+    "Р": "P",
+    "С": "C",
+    "Х": "X",
+    "У": "Y",
+    "К": "K",
+    "М": "M",
+    "Т": "T",
+    "Н": "H",
+    "В": "B",
     # Greek
-    "ο": "o", "α": "a", "ε": "e", "ρ": "p", "υ": "u",
-    "Ο": "O", "Α": "A", "Ε": "E",
+    "ο": "o",
+    "α": "a",
+    "ε": "e",
+    "ρ": "p",
+    "υ": "u",
+    "Ο": "O",
+    "Α": "A",
+    "Ε": "E",
 }
 _CONFUSABLE_TABLE = {ord(k): v for k, v in _CONFUSABLES.items()}
 
@@ -132,6 +160,7 @@ def _decode_base64_injection(line: str) -> str | None:
             return decoded.strip()
     return None
 
+
 # Headings that mark *descriptive* prose — a section where a skill (often a
 # legitimate security tool) merely lists or discusses attack patterns rather
 # than instructing them.  Matches are keyed off heading text substrings.
@@ -155,26 +184,36 @@ _DESCRIPTIVE_HEADING_KEYWORDS: tuple[str, ...] = (
 # positives, …) — incongruous for a skill posing as an ordinary service, and
 # the same heading a legitimate security tool uses to catalogue what it detects.
 
-# Only these categories are suppressed inside descriptive sections.  Prompt
-# injection, data exfiltration, and hidden-instruction rules are NEVER
-# suppressed by section context — hiding those in a "Limitations" section is
-# itself suspicious.  agent_capture is included only for its prose-level
-# rule (SEC-030, mandatory-gating language): a doc that *discusses* gating
-# patterns under "Limitations"/"Examples" is not itself capturing the agent.
-# The supply-chain and proxy/daemon rules are code-block-unsafe and are
-# never suppressed.
+# Only these categories may be suppressed under a descriptive heading — a
+# legitimate security tool genuinely catalogues destructive commands, broad
+# scopes, capture tricks, and payment patterns under "Detection Patterns" etc.
+# prompt_injection and data_exfiltration are NEVER suppressed by heading: an
+# actual "ignore all previous instructions" / "send tokens to <url>" line is
+# an attack wherever it sits, and AuditSkill's own docs no longer embed one
+# (the demo fixture lives server-side, see core/demo.py).
 _DESCRIPTIVE_SKIP_CATEGORIES: frozenset[str] = frozenset(
     {
         "unsafe_operations",
         "scope_creep",
         "agent_capture",
         "payment_safety",
-        "prompt_injection",
-        "data_exfiltration",
     }
 )
 
 _HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)")
+
+# Whole-word/phrase matcher for descriptive headings.  Substring matching used
+# to misfire ("Unknown behavior" contains "known"), letting an attacker pick a
+# heading that silently suppressed findings; word boundaries close that.
+_DESCRIPTIVE_HEADING_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _DESCRIPTIVE_HEADING_KEYWORDS) + r")s?\b",
+    re.IGNORECASE,
+)
+
+
+def _heading_is_descriptive(heading: str) -> bool:
+    """True if *heading* contains a descriptive keyword as a whole word."""
+    return _DESCRIPTIVE_HEADING_RE.search(heading) is not None
 
 
 def _strip_inline_code(line: str) -> str:
@@ -199,7 +238,7 @@ def _identify_descriptive_sections(lines: list[str]) -> set[int]:
         if m:
             level = len(m.group(1))
             heading = m.group(2).strip().lower()
-            is_descriptive = any(kw in heading for kw in _DESCRIPTIVE_HEADING_KEYWORDS)
+            is_descriptive = _heading_is_descriptive(heading)
             if is_descriptive:
                 # Open (or re-anchor) a descriptive section at this level.
                 active = True
@@ -214,6 +253,7 @@ def _identify_descriptive_sections(lines: list[str]) -> set[int]:
         if active:
             descriptive.add(idx)
     return descriptive
+
 
 def _url_rule_id(reason: str) -> str:
     """Map a URL-suspicion reason to a clean, machine-readable rule ID.
@@ -409,8 +449,7 @@ def scan(
     if endpoints is not None and description is not None:
         # check_method_mismatch expects list[dict] with "method" and "path" keys
         ep_dicts = [
-            {"method": ep.method, "path": ep.path}
-            if hasattr(ep, "method") else ep
+            {"method": ep.method, "path": ep.path} if hasattr(ep, "method") else ep
             for ep in endpoints
         ]
         mismatches = check_method_mismatch(description, ep_dicts)
@@ -420,9 +459,7 @@ def scan(
             if isinstance(mismatch, str):
                 detail = mismatch
             elif isinstance(mismatch, dict):
-                detail = mismatch.get(
-                    "detail", "Endpoint method does not match description claims"
-                )
+                detail = mismatch.get("detail", "Endpoint method does not match description claims")
             else:
                 detail = "Endpoint method does not match description claims"
             findings.append(

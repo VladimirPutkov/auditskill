@@ -53,9 +53,9 @@ def canonicalize(document: dict[str, Any]) -> bytes:
     the signature doesn't cover itself.
     """
     doc_copy = _strip_signature(document)
-    return json.dumps(
-        doc_copy, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    return json.dumps(doc_copy, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def _strip_signature(document: dict[str, Any]) -> dict[str, Any]:

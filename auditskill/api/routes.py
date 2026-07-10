@@ -35,6 +35,7 @@ from auditskill.api.models import (
 )
 from auditskill.core import pricing
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
+from auditskill.core.demo import run_demo
 from auditskill.core.certifier import get_public_key, verify_certificate
 from auditskill.core.discover import DENSITY_BONUS, discover
 from auditskill.core.ssrf_guard import SSRFBlockedError
@@ -50,9 +51,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _is_expired(valid_until: Any) -> bool:
+    """Return True if *valid_until* (ISO-8601) is in the past. Unparseable → not expired."""
+    if not isinstance(valid_until, str) or not valid_until:
+        return False
+    from datetime import datetime, timezone
+
+    raw = valid_until[:-1] + "+00:00" if valid_until.endswith("Z") else valid_until
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt < datetime.now(timezone.utc)
+
+
 # ---------------------------------------------------------------------------
 # POST /audit
 # ---------------------------------------------------------------------------
+
 
 @router.post(
     "/audit",
@@ -161,6 +179,7 @@ async def _execute_audit(request: Request, body: AuditRequest) -> AuditResponse:
 # POST /verify
 # ---------------------------------------------------------------------------
 
+
 @router.post(
     "/verify",
     response_model=VerifyResponse,
@@ -195,6 +214,7 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
         if not raw_signature:
             return VerifyResponse(
                 valid=False,
+                signature_valid=False,
                 certificate_id=cert_id,
                 verdict=None,
                 score=None,
@@ -204,11 +224,12 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
         # Pass the FULL certificate (signature included): verify_certificate
         # reads the signature out and canonicalises the rest itself.  Stripping
         # the signature here would make verification always fail.
-        valid = verify_certificate(certificate, public_key_b64)
+        signature_valid = verify_certificate(certificate, public_key_b64)
 
-        if not valid:
+        if not signature_valid:
             return VerifyResponse(
                 valid=False,
+                signature_valid=False,
                 certificate_id=cert_id,
                 verdict=None,
                 score=None,
@@ -219,14 +240,25 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
                 ),
             )
 
-        # Signature is valid: the verdict/score are now trustworthy to echo.
+        # Signature authentic — now check expiry.  `valid` means "trust it":
+        # authentic AND not past valid_until.  An expired-but-authentic cert is
+        # signature_valid=True, expired=True, valid=False.
+        valid_until = certificate.get("valid_until")
+        expired = _is_expired(valid_until)
         raw_score = certificate.get("score")
         return VerifyResponse(
-            valid=True,
+            valid=not expired,
+            signature_valid=True,
+            expired=expired,
             certificate_id=cert_id,
             verdict=str(certificate.get("verdict", "") or ""),
             score=raw_score if isinstance(raw_score, int) else None,
-            error=None,
+            valid_until=str(valid_until) if valid_until else None,
+            error=(
+                None
+                if not expired
+                else f"Certificate signature is authentic but expired at {valid_until}."
+            ),
         )
 
     except HTTPException:
@@ -242,6 +274,7 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
 # ---------------------------------------------------------------------------
 # GET /certificate/{cert_id}
 # ---------------------------------------------------------------------------
+
 
 @router.get(
     "/certificate/{cert_id}",
@@ -276,6 +309,7 @@ async def get_certificate(request: Request, cert_id: str) -> JSONResponse:
 # GET /certificates
 # ---------------------------------------------------------------------------
 
+
 @router.get(
     "/certificates",
     summary="List certificates by skill hash",
@@ -306,6 +340,7 @@ async def list_certificates(
 # ---------------------------------------------------------------------------
 # GET /.well-known/auditskill-keys
 # ---------------------------------------------------------------------------
+
 
 @router.get(
     "/.well-known/auditskill-keys",
@@ -390,6 +425,29 @@ async def skill_md() -> PlainTextResponse:
 # GET /health
 # ---------------------------------------------------------------------------
 
+
+@router.get(
+    "/demo",
+    summary="Run the end-to-end demonstration server-side",
+    description=(
+        "Runs the whole AuditSkill story in one call: scans the live registry "
+        "(ranked), audits a built-in mock attack to show detection, and verifies "
+        "the resulting certificate. Returns an interpreted, render-ready result. "
+        "The mock attack lives on the server, so no malicious text is placed in "
+        "the caller's context window."
+    ),
+)
+@limiter.limit("5/minute")
+async def demo(request: Request) -> dict[str, Any]:
+    """Server-side Scenario-0 orchestration (one call for a vanilla agent)."""
+    store = request.app.state.store
+    try:
+        return await run_demo(store)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Error running demo")
+        raise HTTPException(status_code=500, detail=f"Demo error: {exc}") from exc
+
+
 @router.get(
     "/health",
     response_model=HealthResponse,
@@ -404,6 +462,7 @@ async def health() -> HealthResponse:
 # ---------------------------------------------------------------------------
 # GET /about
 # ---------------------------------------------------------------------------
+
 
 @router.get(
     "/about",
@@ -478,8 +537,14 @@ async def about() -> dict[str, Any]:
 @limiter.limit("5/minute")
 async def discover_skills(
     request: Request,
-    q: str = Query(default="", description="Filter skills by name/description/tags (case-insensitive substring)."),
-    mode: str = Query(default="safe_static", description="'safe_static' (fast) or 'liveness' (also probes endpoints)."),
+    q: str = Query(
+        default="",
+        description="Filter skills by name/description/tags (case-insensitive substring).",
+    ),
+    mode: str = Query(
+        default="safe_static",
+        description="'safe_static' (fast) or 'liveness' (also probes endpoints).",
+    ),
     limit: int = Query(default=20, ge=1, le=30, description="Max entries to audit (capped at 30)."),
     registry_url: str = Query(
         default="https://nandatown.projectnanda.org/api/skills",
@@ -489,9 +554,7 @@ async def discover_skills(
     """Proxy the live NANDA Town registry with inline audit verdicts."""
     store = request.app.state.store
     try:
-        result = await discover(
-            q=q, mode=mode, limit=limit, registry_url=registry_url, store=store
-        )
+        result = await discover(q=q, mode=mode, limit=limit, registry_url=registry_url, store=store)
         return result.model_dump(mode="json")
     except SSRFBlockedError as exc:
         # A blocked registry URL is a bad *request*, not a server fault.
@@ -513,6 +576,7 @@ async def discover_skills(
 # ---------------------------------------------------------------------------
 # GET /benchmarks
 # ---------------------------------------------------------------------------
+
 
 @router.get(
     "/benchmarks",

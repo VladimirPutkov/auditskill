@@ -47,7 +47,7 @@ RECOMMENDED_SECTIONS: list[tuple[str, int]] = [
 
 LIVENESS_PENALTIES: dict[str, int] = {
     "dead_endpoint_base": 15,
-    "high_latency": 5,      # >2 s response time
+    "high_latency": 5,  # >2 s response time
     "no_tls": 10,
 }
 
@@ -90,6 +90,7 @@ def calculate_structure_score(parsed: Any) -> int:
     Returns:
         An integer score clamped to ``[0, 100]``.
     """
+
     def _get(obj: object, key: str) -> bool:
         """Get a boolean field from a dict or Pydantic model."""
         try:
@@ -142,9 +143,7 @@ def calculate_overall_score(
             weight_sum += weight
 
     if weight_sum == 0.0:
-        raise ValueError(
-            "Cannot compute overall score — all module scores are None"
-        )
+        raise ValueError("Cannot compute overall score — all module scores are None")
 
     normalised = weighted_sum / weight_sum
     return max(0, min(100, round(normalised)))

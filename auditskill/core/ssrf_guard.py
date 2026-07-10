@@ -67,11 +67,13 @@ class SSRFCheckResult:
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 
 # Hostnames that are always blocked (case-insensitive exact match or suffix).
-_BLOCKED_HOSTNAME_EXACT = frozenset({
-    "localhost",
-    "metadata.google.internal",
-    "instance-data",
-})
+_BLOCKED_HOSTNAME_EXACT = frozenset(
+    {
+        "localhost",
+        "metadata.google.internal",
+        "instance-data",
+    }
+)
 _BLOCKED_HOSTNAME_SUFFIXES = (
     ".local",
     ".internal",
@@ -90,22 +92,22 @@ _NUMERIC_HOST_RE = re.compile(
 
 # CIDR ranges that must never be contacted.
 _BLOCKED_IPV4_NETWORKS = [
-    ipaddress.IPv4Network("127.0.0.0/8"),       # loopback
-    ipaddress.IPv4Network("10.0.0.0/8"),         # private class A
-    ipaddress.IPv4Network("172.16.0.0/12"),      # private class B
-    ipaddress.IPv4Network("192.168.0.0/16"),     # private class C
-    ipaddress.IPv4Network("169.254.0.0/16"),     # link-local + cloud metadata
-    ipaddress.IPv4Network("0.0.0.0/8"),          # unspecified
-    ipaddress.IPv4Network("100.64.0.0/10"),      # CGNAT (RFC 6598)
-    ipaddress.IPv4Network("198.18.0.0/15"),      # benchmarking (RFC 2544)
+    ipaddress.IPv4Network("127.0.0.0/8"),  # loopback
+    ipaddress.IPv4Network("10.0.0.0/8"),  # private class A
+    ipaddress.IPv4Network("172.16.0.0/12"),  # private class B
+    ipaddress.IPv4Network("192.168.0.0/16"),  # private class C
+    ipaddress.IPv4Network("169.254.0.0/16"),  # link-local + cloud metadata
+    ipaddress.IPv4Network("0.0.0.0/8"),  # unspecified
+    ipaddress.IPv4Network("100.64.0.0/10"),  # CGNAT (RFC 6598)
+    ipaddress.IPv4Network("198.18.0.0/15"),  # benchmarking (RFC 2544)
 ]
 _BLOCKED_IPV6_NETWORKS = [
-    ipaddress.IPv6Network("::1/128"),            # loopback
-    ipaddress.IPv6Network("::/128"),             # unspecified
-    ipaddress.IPv6Network("fc00::/7"),           # unique local
-    ipaddress.IPv6Network("fe80::/10"),          # link-local
-    ipaddress.IPv6Network("64:ff9b::/96"),       # NAT64 (embeds IPv4)
-    ipaddress.IPv6Network("2001::/32"),          # Teredo (embeds IPv4)
+    ipaddress.IPv6Network("::1/128"),  # loopback
+    ipaddress.IPv6Network("::/128"),  # unspecified
+    ipaddress.IPv6Network("fc00::/7"),  # unique local
+    ipaddress.IPv6Network("fe80::/10"),  # link-local
+    ipaddress.IPv6Network("64:ff9b::/96"),  # NAT64 (embeds IPv4)
+    ipaddress.IPv6Network("2001::/32"),  # Teredo (embeds IPv4)
 ]
 
 # Ports we will connect to: standard web ports, plus the unprivileged range
@@ -274,9 +276,7 @@ def _resolve_and_check(hostname: str, url: str) -> str:
     Returns the first safe resolved IP address (the one we'll pin to).
     """
     try:
-        addr_infos = socket.getaddrinfo(
-            hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-        )
+        addr_infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise SSRFBlockedError(f"DNS resolution failed: {exc}", url) from exc
 
@@ -290,9 +290,7 @@ def _resolve_and_check(hostname: str, url: str) -> str:
         try:
             ip_obj = ipaddress.ip_address(ip_str)
         except ValueError as exc:
-            raise SSRFBlockedError(
-                f"Unparseable resolved IP: {ip_str}", url
-            ) from exc
+            raise SSRFBlockedError(f"Unparseable resolved IP: {ip_str}", url) from exc
 
         # Check against blocked ranges
         if isinstance(ip_obj, ipaddress.IPv4Address):
@@ -315,8 +313,7 @@ def _resolve_and_check(hostname: str, url: str) -> str:
                 for net in _BLOCKED_IPV4_NETWORKS:
                     if mapped_v4 in net:
                         raise SSRFBlockedError(
-                            f"Resolved IP {ip_str} maps to blocked IPv4 {mapped_v4} "
-                            f"in range {net}",
+                            f"Resolved IP {ip_str} maps to blocked IPv4 {mapped_v4} in range {net}",
                             url,
                         )
 
@@ -419,8 +416,7 @@ async def _pinned_request(
                 total += len(chunk)
                 if total > _MAX_RESPONSE_BYTES:
                     raise SSRFBlockedError(
-                        f"Response body too large: {total} bytes "
-                        f"(max {_MAX_RESPONSE_BYTES})",
+                        f"Response body too large: {total} bytes (max {_MAX_RESPONSE_BYTES})",
                         url,
                     )
                 chunks.append(chunk)

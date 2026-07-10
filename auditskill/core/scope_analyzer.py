@@ -22,19 +22,34 @@ from auditskill.api.models import ParsedSkill, ScopeReport
 DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "weather": ["weather", "forecast", "temperature", "climate"],
     "finance": [
-        "stock", "price", "trade", "payment", "invoice",
-        "currency", "exchange",
+        "stock",
+        "price",
+        "trade",
+        "payment",
+        "invoice",
+        "currency",
+        "exchange",
     ],
     "health": ["health", "medical", "patient", "clinical", "diagnosis"],
     "social": [
-        "social", "post", "tweet", "message", "chat", "notification",
+        "social",
+        "post",
+        "tweet",
+        "message",
+        "chat",
+        "notification",
     ],
     "search": ["search", "query", "find", "lookup", "discover"],
     "data": ["data", "database", "store", "crud", "record"],
     "auth": ["auth", "login", "register", "token", "session", "verify"],
     "media": ["image", "video", "audio", "file", "upload", "download"],
     "ai": [
-        "ai", "model", "predict", "classify", "generate", "llm",
+        "ai",
+        "model",
+        "predict",
+        "classify",
+        "generate",
+        "llm",
         "embedding",
     ],
     "infra": ["deploy", "monitor", "log", "metric", "health", "status"],
@@ -71,15 +86,14 @@ _WORD_PATTERNS: dict[str, re.Pattern[str]] = {}
 def _word_pattern(keyword: str) -> re.Pattern[str]:
     """Return a compiled word-boundary regex for *keyword*, cached."""
     if keyword not in _WORD_PATTERNS:
-        _WORD_PATTERNS[keyword] = re.compile(
-            rf"\b{re.escape(keyword)}\b", re.IGNORECASE
-        )
+        _WORD_PATTERNS[keyword] = re.compile(rf"\b{re.escape(keyword)}\b", re.IGNORECASE)
     return _WORD_PATTERNS[keyword]
 
 
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
 
 def _detect_domains(parsed: ParsedSkill) -> list[str]:
     """Return a sorted, deduplicated list of detected domain names."""
@@ -111,9 +125,7 @@ def _classify_breadth(domain_count: int) -> str:
 
 def _has_state_changing_endpoints(parsed: ParsedSkill) -> bool:
     """Return ``True`` if the skill declares any state-changing endpoints."""
-    return any(
-        ep.method.upper() in _STATE_CHANGING_METHODS for ep in parsed.endpoints
-    )
+    return any(ep.method.upper() in _STATE_CHANGING_METHODS for ep in parsed.endpoints)
 
 
 def _find_missing_sections(parsed: ParsedSkill) -> list[str]:
@@ -153,16 +165,12 @@ def _generate_recommendations(
     endpoint_count = len(parsed.endpoints)
     if endpoint_count > 10:
         recs.append(
-            f"Consider splitting - {endpoint_count} endpoints may be "
-            "hard for agents to navigate"
+            f"Consider splitting - {endpoint_count} endpoints may be hard for agents to navigate"
         )
 
     example_count = getattr(parsed, "example_count", 0) or 0
     if example_count == 0:
-        recs.append(
-            "Add usage examples - agents rely on examples to understand "
-            "calling patterns"
-        )
+        recs.append("Add usage examples - agents rely on examples to understand calling patterns")
 
     return recs
 
@@ -200,6 +208,7 @@ def _calculate_score(
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
+
 
 def analyze_scope(parsed: ParsedSkill) -> ScopeReport:
     """Analyse a parsed SKILL.md for breadth, specificity, and completeness.

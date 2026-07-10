@@ -15,5 +15,11 @@ jobs:
           python-version: "3.11"
       - name: Install
         run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: ruff check auditskill/ tests/
+      - name: Format check (ruff)
+        run: ruff format --check auditskill/ tests/
+      - name: Type check (pyright)
+        run: pyright auditskill/
       - name: Run tests
         run: pytest -q
