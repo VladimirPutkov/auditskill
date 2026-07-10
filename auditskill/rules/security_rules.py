@@ -90,6 +90,7 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
             "prompt-injection vector.  Negated forms ('do not ignore "
             "previous instructions') are excluded."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-002",
@@ -106,7 +107,7 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
             "the agent's identity.  Benign phrasing like 'you are now "
             "ready' is excluded by requiring a role/identity token."
         ),
-        is_code_block_safe=True,
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-003",
@@ -122,6 +123,7 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
             "prompt governing agent behaviour.  Negated statements "
             "('does not override your system…') are excluded."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-004",
@@ -136,6 +138,7 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
             "discard its conversation or safety context.  Negated forms "
             "('do not forget everything') are excluded."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-005",
@@ -151,6 +154,7 @@ _PROMPT_INJECTION_RULES: list[SecurityRule] = [
             "or restriction rules.  Negated statements ('does not "
             "override … safety …') are excluded."
         ),
+        is_code_block_safe=False,
     ),
 ]
 
@@ -172,6 +176,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
             "Detects instructions to send sensitive data (tokens, keys, "
             "credentials) to an external destination."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-007",
@@ -184,6 +189,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
             "Detects instructions to upload environment variables, "
             "transmit logs, or forward credentials externally."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-008",
@@ -198,7 +204,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
             "key/value pairs (api_key=, \"token\":, password=…).  An "
             "endpoint path like 'POST /auth/token' no longer false-fires."
         ),
-        is_code_block_safe=True,
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-009",
@@ -209,6 +215,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
             "Detects explicit exfiltration language or phone-home / "
             "external-callback patterns."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-010",
@@ -222,6 +229,7 @@ _DATA_EXFILTRATION_RULES: list[SecurityRule] = [
             "Detects curl commands that POST sensitive values (secrets, "
             "tokens, passwords) to a remote endpoint."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-034",
@@ -258,6 +266,7 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
             "Detects destructive file-system operations (recursive delete, "
             "forced rmdir, Windows del /s)."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-012",
@@ -268,6 +277,7 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
             "Detects destructive SQL statements (DROP TABLE, TRUNCATE, "
             "unconditional DELETE)."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-013",
@@ -278,6 +288,7 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
             "Detects privilege-escalation commands: sudo, world-writable "
             "permissions, ownership changes to root."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-014",
@@ -289,6 +300,7 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
             "os.system, subprocess.call, __import__).  Word-boundary "
             "anchoring avoids matching 'retrieval(' / 'medieval('."
         ),
+        is_code_block_safe=False,
     ),
     SecurityRule(
         rule_id="SEC-015",
@@ -299,6 +311,7 @@ _UNSAFE_OPERATIONS_RULES: list[SecurityRule] = [
             "Detects disk-level destructive operations (format, fdisk, "
             "mkfs, dd) that could destroy data."
         ),
+        is_code_block_safe=False,
     ),
 ]
 

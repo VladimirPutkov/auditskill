@@ -143,14 +143,17 @@ _DESCRIPTIVE_HEADING_KEYWORDS: tuple[str, ...] = (
     "disclaimer",
     "caveat",
     "false positive",
-    "example",
     "known",
     "what this does not",
     "what it does not",
-    "how",
-    "problem",
-    "overview",
 )
+# NOTE: broad, natural-sounding headings like "How to use", "Overview",
+# "Problem", and "Examples"/"Usage examples" were deliberately removed — they
+# let an attacker suppress a real payload simply by titling the section that
+# way.  Suppression now requires an overtly *security-documentation* heading
+# (Detection Patterns, Limitations, Transparency, Disclaimer, Known, False
+# positives, …) — incongruous for a skill posing as an ordinary service, and
+# the same heading a legitimate security tool uses to catalogue what it detects.
 
 # Only these categories are suppressed inside descriptive sections.  Prompt
 # injection, data exfiltration, and hidden-instruction rules are NEVER
@@ -161,7 +164,14 @@ _DESCRIPTIVE_HEADING_KEYWORDS: tuple[str, ...] = (
 # The supply-chain and proxy/daemon rules are code-block-unsafe and are
 # never suppressed.
 _DESCRIPTIVE_SKIP_CATEGORIES: frozenset[str] = frozenset(
-    {"unsafe_operations", "scope_creep", "agent_capture", "payment_safety"}
+    {
+        "unsafe_operations",
+        "scope_creep",
+        "agent_capture",
+        "payment_safety",
+        "prompt_injection",
+        "data_exfiltration",
+    }
 )
 
 _HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)")
@@ -277,34 +287,31 @@ def scan(
     for rule in rules:
         compiled = rule.compiled  # process-cached compile (see security_rules)
         for idx, line in enumerate(lines):
+            # (1) Descriptive-section suppression is independent of code-block
+            #     safety: a skill that *lists* attack patterns under a heading
+            #     like "Detection Patterns" / "Examples" / "Limitations" is
+            #     documenting them, not instructing them.  Only the categories
+            #     in _DESCRIPTIVE_SKIP_CATEGORIES are eligible.
+            if rule.category in _DESCRIPTIVE_SKIP_CATEGORIES and idx in descriptive_lines:
+                continue
+
             if rule.is_code_block_safe:
-                # Code-block-safe rules describe patterns that legitimately
-                # appear in *documentation*.  We therefore ignore matches that:
-                #   (a) sit inside a fenced ``` code block, or
-                #   (b) sit inside an inline `code` span, or
-                #   (c) (for pattern-describing categories) sit under a
-                #       descriptive heading like "Limitations" / "Detection
-                #       Patterns" / "Examples" / "Transparency".
+                # Code-block-safe rules describe patterns that also appear
+                # legitimately in fenced/inline code (e.g. a long Base64 blob,
+                # an HTML-comment example).  Ignore matches inside code.
                 if idx in code_block_lines:
                     continue
-                if (
-                    rule.category in _DESCRIPTIVE_SKIP_CATEGORIES
-                    and idx in descriptive_lines
-                ):
-                    continue
                 stripped = _strip_inline_code(line)
-                # Match against both the raw line and an evasion-normalised
-                # copy (zero-width stripped, homoglyphs folded), so a spliced
-                # or homoglyph-disguised injection is still caught.
                 candidates = {stripped, _normalize_for_matching(stripped)}
             else:
-                # Code-block-UNSAFE rules (zero-width, bidi, homoglyphs,
-                # supply-chain installs, proxy rewrites, daemons, credential
-                # hand-off) are dangerous regardless of surrounding prose, so
-                # descriptive-section suppression does NOT apply — otherwise
-                # an attacker could hide `export HTTP_PROXY=…` or a
-                # set-api-key instruction under a "How it works" heading.
-                candidates = {line}
+                # Code-block-UNSAFE rules are dangerous regardless of fences —
+                # real malicious commands (rm -rf, DROP TABLE, pip install from
+                # a URL, "ignore all previous instructions", curl -d token=…)
+                # LIVE inside code blocks.  Scan the raw line (plus an
+                # evasion-normalised copy) so a fenced or inline-code payload is
+                # still caught.  Legitimate documentation of these patterns is
+                # covered by the descriptive-section check above.
+                candidates = {line, _normalize_for_matching(line)}
 
             if any(compiled.search(c) for c in candidates):
                 rules_triggered.add(rule.rule_id)

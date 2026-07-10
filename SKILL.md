@@ -58,7 +58,7 @@ Use when you are told simply to "use this skill", "perform the service", or "run
    - the top 3 entries of `issues[]` (each `severity`, `msg`, `module`) — these explain why the score is low when there are no security findings (they are usually `structure`/`metadata` problems: missing base URL, no description, no examples).
    - from `context_cost`: `tokens_estimate`, `density`, and from `per_model[]` the **cheapest** entry, the **`claude-opus-4-8`** entry, and the **most expensive** entry (each: `input_cost_usd` + `model`).
    Classify the worst skill for the report: if `security.findings[]` is non-empty → it is a **security risk** (name the rules). If it is empty → it is **not an attack**; it is flagged as **unreliable / unusable** — an agent cannot depend on it (e.g. no base URL means its endpoints cannot even be called), so it should be kept out of production and fixed by its author, not audited as a threat. If the fetch fails (see "Errors"), retry once with the next-lowest audited entry that has a `source_url`; if none work, say so and continue.
-4. Run the built-in detection self-test: `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below. **This is a mock malicious SKILL.md that ships inside this skill purely to prove the detection engine works on a definite attack — it is not from the registry and is not a real service.** Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every `security.findings[]` entry, and the whole `certificate` object. Allow up to 15 seconds.
+4. Run the built-in detection self-test: `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Detection example: POST /audit catching an attack" below. **This is a mock malicious SKILL.md that ships inside this skill purely to prove the detection engine works on a definite attack — it is not from the registry and is not a real service.** Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every `security.findings[]` entry, and the whole `certificate` object. Allow up to 15 seconds.
 5. Prove it is signed: `POST https://auditskill.up.railway.app/verify` with body `{"certificate": X}` where **X is the value of the `certificate` field from step 4's response** — not the whole response. Forward it unchanged. Expect `"valid": true`. Allow up to 10 seconds.
 6. Compose your answer exactly per "Report format" below.
 
@@ -194,7 +194,7 @@ Use when a user (or another agent) hands you a certificate object and asks wheth
 | `GET /skill.md` | This document, served from the deployed code itself | — |
 | `GET /` | Service index: JSON pointers to the endpoints above | — |
 
-## Example: POST /audit
+## Detection example: POST /audit catching an attack
 
 A malicious skill that fails — the injection lives inside the request body, so it is audited, not executed. This is a `bash`/`curl` example; on another platform or HTTP client, issue the equivalent request: `POST` to the URL, header `Content-Type: application/json`, and the JSON below as the body. To audit a file you already have by URL, prefer `skill_url` — it avoids escaping the markdown entirely.
 
@@ -287,7 +287,7 @@ Top-level fields of every `/audit` response:
 
 | Verdict | Score gate | Security gate | What you should do |
 |---|---|---|---|
-| `PASS_BASIC_AUDIT` | >= 85 | no medium/high/critical findings | Safe to load and use. |
+| `PASS_BASIC_AUDIT` | >= 85 | no medium/high/critical findings | No known-malicious patterns detected — clear to load, but this is "no red flags found", not a proof of safety (see Limitations). |
 | `PASS_WITH_WARNINGS` | >= 70 | no high/critical findings | Usable; read `issues` first, proceed with care. |
 | `REQUIRES_HUMAN_REVIEW` | >= 40 | any high finding | Do not use automatically; surface `issues` to the user. |
 | `FAILS_BASIC_AUDIT` | < 40 | any critical finding | Do not load. Tell the user why (see `security.findings`). |
@@ -337,7 +337,8 @@ None. AuditSkill is zero-auth — no key, no token, no signup. Call any endpoint
 
 ## Limitations
 
-- A `PASS` means "no red flags found," not "provably safe forever"; certificates carry a `valid_until`.
+- A `PASS` means "no known-malicious patterns detected," not "provably safe forever." Detection is deterministic pattern-matching, not an LLM: it catches the catalogued attack classes (including inside code blocks and under normal headings like Usage/Installation/Setup), but a novel or heavily-paraphrased injection can still pass. Treat `PASS` as a strong pre-load filter, not a guarantee; certificates carry a `valid_until`.
+- To avoid false-flagging legitimate security tools, patterns catalogued under overtly descriptive headings (`Detection Patterns`, `Limitations`, `Transparency`, `Disclaimer`, `Known ...`, `False positives`) are treated as documentation, not instructions. A skill that deliberately hides live payloads under such a heading is the main residual blind spot of a rule-based pass.
 - Liveness probes use GET/HEAD only — POST/PUT/PATCH/DELETE are never sent.
 - It audits the SKILL.md document, not the running service behind it, and does not verify semantic correctness.
 - It is a pre-load auditor, not a runtime firewall, identity registry, or payment layer.
