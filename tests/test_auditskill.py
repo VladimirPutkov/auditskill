@@ -467,6 +467,36 @@ async def test_discover_rejects_non_https_registry():
         await discover(registry_url="http://insecure.example.com/api/skills")
 
 
+async def test_discover_uses_bounded_two_mib_registry_budget(monkeypatch):
+    """The registry may grow to 500 entries without weakening other fetches."""
+    import httpx
+
+    import auditskill.core.discover as discover_mod
+
+    captured: dict[str, int] = {}
+
+    async def fake_request(method, url, *, max_response_bytes, **kwargs):
+        captured["max_response_bytes"] = max_response_bytes
+        request = httpx.Request(method, url)
+        return httpx.Response(200, json={"skills": []}, request=request)
+
+    monkeypatch.setattr(discover_mod, "safe_request", fake_request)
+    result = await discover_mod.discover(limit=20)
+    assert result.total_in_registry == 0
+    assert captured["max_response_bytes"] == 2 * 1024 * 1024
+
+
+async def test_ssrf_response_override_cannot_exceed_absolute_ceiling():
+    from auditskill.core.ssrf_guard import safe_request
+
+    with pytest.raises(ValueError, match="max_response_bytes"):
+        await safe_request(
+            "GET",
+            "https://example.com",
+            max_response_bytes=2 * 1024 * 1024 + 1,
+        )
+
+
 def test_pricing_includes_openai_models():
     from auditskill.core import pricing
 

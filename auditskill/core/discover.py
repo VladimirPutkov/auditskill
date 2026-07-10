@@ -33,6 +33,12 @@ DEFAULT_REGISTRY_URL = "https://nandatown.projectnanda.org/api/skills"
 _MAX_ENTRIES = 30
 _MAX_CONCURRENCY = 4
 _PER_AUDIT_TIMEOUT = 20.0
+# The public registry currently averages roughly 2.3 KiB per listing. A
+# 2 MiB decoded-body cap accommodates the expected maximum of 500 submissions
+# with substantial headroom while remaining a strict, memory-safe bound. This
+# larger allowance applies only to the registry feed; arbitrary skill URLs and
+# endpoint probes retain safe_request's 256 KiB default.
+_MAX_REGISTRY_RESPONSE_BYTES = 2 * 1024 * 1024
 
 # Deterministic ranking: composite = overall_score + density bonus.  The
 # formula is published verbatim in /benchmarks — no hidden magic.
@@ -294,7 +300,11 @@ async def discover(
 
     limit = max(1, min(limit, _MAX_ENTRIES))
 
-    resp = await safe_request("GET", registry_url)
+    resp = await safe_request(
+        "GET",
+        registry_url,
+        max_response_bytes=_MAX_REGISTRY_RESPONSE_BYTES,
+    )
     try:
         payload = resp.json()
     except Exception as exc:  # noqa: BLE001 — registry served non-JSON

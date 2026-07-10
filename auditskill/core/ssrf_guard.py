@@ -118,7 +118,8 @@ _ALLOWED_LOW_PORTS = frozenset({80, 443})
 
 # Hard limits
 _TIMEOUT_SECONDS = 3.0
-_MAX_RESPONSE_BYTES = 256 * 1024  # 256 KiB
+_DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024  # 256 KiB
+_MAX_ALLOWED_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MiB absolute ceiling
 _MAX_REDIRECTS = 2
 
 # ---------------------------------------------------------------------------
@@ -154,6 +155,7 @@ async def safe_request(
     url: str,
     *,
     timeout_override: float | None = None,
+    max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
     **kwargs: Any,
 ) -> httpx.Response:
     """Make an HTTP request through the SSRF guard.
@@ -175,6 +177,10 @@ async def safe_request(
         request.
     """
     effective_timeout = timeout_override if timeout_override is not None else _TIMEOUT_SECONDS
+    if not 1 <= max_response_bytes <= _MAX_ALLOWED_RESPONSE_BYTES:
+        raise ValueError(
+            f"max_response_bytes must be between 1 and {_MAX_ALLOWED_RESPONSE_BYTES} bytes"
+        )
     # Strip dangerous kwargs the caller might try to sneak in
     kwargs.pop("follow_redirects", None)
     kwargs.pop("cookies", None)
@@ -194,6 +200,7 @@ async def safe_request(
             url=current_url,
             pinned_ip=result.resolved_ip,
             timeout_seconds=effective_timeout,
+            max_response_bytes=max_response_bytes,
             **kwargs,
         )
 
@@ -377,6 +384,7 @@ async def _pinned_request(
     url: str,
     pinned_ip: str,
     timeout_seconds: float = _TIMEOUT_SECONDS,
+    max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
     **kwargs: Any,
 ) -> httpx.Response:
     """Execute a single HTTP request pinned to a specific IP.
@@ -414,9 +422,9 @@ async def _pinned_request(
             total = 0
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
-                if total > _MAX_RESPONSE_BYTES:
+                if total > max_response_bytes:
                     raise SSRFBlockedError(
-                        f"Response body too large: {total} bytes (max {_MAX_RESPONSE_BYTES})",
+                        f"Response body too large: {total} bytes (max {max_response_bytes})",
                         url,
                     )
                 chunks.append(chunk)
