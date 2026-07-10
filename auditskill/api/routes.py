@@ -36,7 +36,13 @@ from auditskill.api.models import (
 from auditskill.core import pricing
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
 from auditskill.core.demo import render_demo_report, run_demo
-from auditskill.core.certifier import get_public_key, verify_certificate_status
+from auditskill.core.certifier import (
+    CERT_VALIDITY_DAYS,
+    RULESET_HASH,
+    RULESET_VERSION,
+    get_public_key,
+    verify_certificate_status,
+)
 from auditskill.core.discover import DENSITY_BONUS, discover
 from auditskill.core.ssrf_guard import SSRFBlockedError
 from auditskill.rules.quality_benchmarks import SCORING_WEIGHTS
@@ -443,8 +449,9 @@ async def about() -> dict[str, Any]:
             "the agent can decide whether loading it is worth the budget.",
         ],
         "how": (
-            "POST /audit one file, or GET /discover to scan the whole registry "
-            "ranked best-first. Deterministic, rule-based, no LLM, zero auth."
+            "POST /audit checks one file; GET /discover returns a bounded, "
+            "ranked registry sample; GET /demo?format=report demonstrates the "
+            "workflow. Deterministic, rule-based, no LLM, zero auth."
         ),
         "when_to_use": "Before loading any skill you did not write.",
         "when_not_to_use": (
@@ -453,11 +460,47 @@ async def about() -> dict[str, Any]:
             "reputation layer."
         ),
         "primary_endpoints": {
+            "demonstrate": "GET /demo?format=report",
             "audit": "POST /audit",
             "discover": "GET /discover",
             "verify": "POST /verify",
+            "rules": "GET /rules",
             "benchmarks": "GET /benchmarks",
         },
+        "question_routing": {
+            "exact_rule_ids_and_descriptions": "GET /rules",
+            "raw_detection_patterns": "GET /rules?include_patterns=true",
+            "scoring_thresholds_modes_pricing_and_certificates": "GET /benchmarks",
+            "purpose_limits_data_handling_and_rate_limits": "GET /about",
+            "complete_request_and_response_schemas": "GET /openapi.json",
+            "current_service_status": "GET /health",
+            "public_verification_key": "GET /.well-known/auditskill-keys",
+        },
+        "data_handling": {
+            "raw_skill_document_persisted": False,
+            "stored": (
+                "Audit result, content hash, parsed findings, and signed certificate "
+                "metadata are stored for cache and certificate retrieval."
+            ),
+            "automatic_retention_deletion": False,
+            "user_accounts": False,
+        },
+        "rate_limits_per_ip": {
+            "POST /audit": "10/minute",
+            "GET /audit": "10/minute",
+            "GET /demo": "5/minute",
+            "GET /discover": "5/minute",
+            "POST /verify": "60/minute",
+            "GET /certificate/{id}": "60/minute",
+            "GET /certificates": "30/minute",
+            "public_metadata_endpoints": "unlimited",
+        },
+        "limitations": [
+            "A pass means no catalogued pattern was found, not proof of safety.",
+            "The document is audited; the running service behind it is not.",
+            "Static mode does not establish endpoint availability.",
+            "Token and cost values are heuristic estimates from a dated snapshot.",
+        ],
         "self_contained": (
             "All scoring, security rules, and price data ship inside the "
             "service — no dependency on any third-party skill or external feed."
@@ -476,9 +519,9 @@ async def about() -> dict[str, Any]:
     summary="Safe discovery — audit the live registry",
     description=(
         "Fetches the NANDA Town skill registry (or any NANDA-style registry) "
-        "and audits every matching entry inline. Returns the listing with a "
-        "verdict, score, and risk level attached to each skill — so an agent "
-        "only ever sees pre-vetted results."
+        "and audits a bounded matching sample inline. Audited entries carry a "
+        "verdict, score, and risk level; unavailable entries are marked, and "
+        "suspicious registry metadata is withheld."
     ),
 )
 @limiter.limit("5/minute")
@@ -521,6 +564,91 @@ async def discover_skills(
 
 
 # ---------------------------------------------------------------------------
+# GET /rules
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/rules",
+    summary="Security rule catalog",
+    description=(
+        "Return every security rule with its stable SEC identifier, category, "
+        "severity, and human-readable detection purpose. Filter by rule, category, "
+        "or severity; request raw regex patterns only when needed."
+    ),
+)
+async def rules_catalog(
+    rule_id: str | None = Query(
+        default=None,
+        description="Exact stable identifier, for example SEC-001.",
+    ),
+    category: str | None = Query(
+        default=None,
+        description="Exact category, for example prompt_injection.",
+    ),
+    severity: str | None = Query(
+        default=None,
+        pattern="^(critical|high|medium|low)$",
+    ),
+    include_patterns: bool = Query(
+        default=False,
+        description="Include the raw case-insensitive regex for each returned rule.",
+    ),
+) -> dict[str, Any]:
+    """Expose the complete versioned detection policy to autonomous agents."""
+    all_rules = sorted(get_all_rules(), key=lambda rule: rule.rule_id)
+    normalized_id = rule_id.upper() if rule_id else None
+    normalized_category = category.lower() if category else None
+    selected = [
+        rule
+        for rule in all_rules
+        if (normalized_id is None or rule.rule_id == normalized_id)
+        and (normalized_category is None or rule.category == normalized_category)
+        and (severity is None or rule.severity == severity)
+    ]
+    if rule_id and not selected:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown rule_id '{rule_id}'. Use GET /rules to list all rule IDs.",
+        )
+
+    rules: list[dict[str, Any]] = []
+    for rule in selected:
+        item: dict[str, Any] = {
+            "rule_id": rule.rule_id,
+            "category": rule.category,
+            "severity": rule.severity,
+            "description": rule.description,
+            "code_context_sensitive": rule.is_code_block_safe,
+        }
+        if include_patterns:
+            item["pattern"] = rule.pattern
+            item["pattern_flags"] = ["IGNORECASE"]
+        rules.append(item)
+
+    categories = sorted({rule.category for rule in all_rules})
+    return {
+        "ruleset_version": RULESET_VERSION,
+        "ruleset_hash": RULESET_HASH,
+        "total_rules_in_ruleset": len(all_rules),
+        "returned": len(rules),
+        "available_categories": categories,
+        "filters": {
+            "rule_id": normalized_id,
+            "category": normalized_category,
+            "severity": severity,
+            "include_patterns": include_patterns,
+        },
+        "context_policy": (
+            "Operational matches use the declared severity. Documentation or code "
+            "context may lower confidence from critical/high to medium, but a heading "
+            "or code fence never suppresses a raw match."
+        ),
+        "rules": rules,
+    }
+
+
+# ---------------------------------------------------------------------------
 # GET /benchmarks
 # ---------------------------------------------------------------------------
 
@@ -553,6 +681,24 @@ async def benchmarks() -> dict[str, Any]:
         "verdict_thresholds": verdict_thresholds,
         "security_categories": categories,
         "total_rules": len(all_rules),
+        "rule_catalog": {
+            "all_rules": "GET /rules",
+            "filter_examples": [
+                "GET /rules?rule_id=SEC-001",
+                "GET /rules?category=prompt_injection",
+                "GET /rules?severity=critical",
+                "GET /rules?include_patterns=true",
+            ],
+            "ruleset_version": RULESET_VERSION,
+            "ruleset_hash": RULESET_HASH,
+        },
+        "audit_modes": {
+            "safe_static": ("Parse and scan the document without probing its declared endpoints."),
+            "liveness": (
+                "Run the same static audit, then bounded GET/HEAD availability probes; "
+                "never send POST, PUT, PATCH, or DELETE."
+            ),
+        },
         "discover_ranking": {
             "primary": (
                 "verdict tier: PASS_BASIC_AUDIT, PASS_WITH_WARNINGS, "
@@ -575,9 +721,34 @@ async def benchmarks() -> dict[str, Any]:
             "low": "everything else",
         },
         "context_cost_models": pricing.known_models(),
+        "model_pricing": [
+            {
+                "model": price.model,
+                "family": price.family,
+                "input_usd_per_million_tokens": round(price.input_per_1k_usd * 1000, 6),
+                "context_window_tokens": price.context_window_k * 1000,
+            }
+            for price in sorted(pricing.price_cache.prices.values(), key=lambda item: item.model)
+        ],
         "price_snapshot": {
             "source": pricing.price_cache.source,
             "error_margin_pct": pricing.ERROR_MARGIN_PCT,
+        },
+        "certificate_policy": {
+            "signature_algorithm": "Ed25519",
+            "validity_days": CERT_VALIDITY_DAYS,
+            "trust_condition": (
+                "Trust verdict and score only when signature_valid=true, "
+                "expired=false, and valid=true."
+            ),
+            "public_key_endpoint": "GET /.well-known/auditskill-keys",
+            "online_verification_endpoint": "POST /verify",
+            "schema_fields": [
+                "schema_version",
+                "service_version",
+                "ruleset_version",
+                "ruleset_hash",
+            ],
         },
         "limits": {
             "max_skill_input_bytes": MAX_SKILL_INPUT_BYTES,

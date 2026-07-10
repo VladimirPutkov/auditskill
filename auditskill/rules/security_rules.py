@@ -54,10 +54,10 @@ class SecurityRule:
         severity: Impact level — ``critical``, ``high``, ``medium``, or ``low``.
         pattern: Regex pattern string (use with ``re.IGNORECASE``).
         description: Human-readable explanation of what the rule detects.
-        is_code_block_safe: When ``True``, matches that occur inside fenced
-            code blocks (` ``` `) are **not** flagged.  This prevents
-            false positives on documentation that merely *describes*
-            dangerous patterns without *instructing* them.
+        is_code_block_safe: Historical name for a context-sensitive rule.
+            When ``True``, a match found only inside code may be downgraded
+            from critical/high to medium; it is never suppressed. This keeps
+            documentation usable without allowing fences to become a bypass.
     """
 
     rule_id: str

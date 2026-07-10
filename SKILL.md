@@ -41,6 +41,20 @@ The response is the final judge-facing plain-text report. Return its body verbat
 
 Do not call `/discover`, `/audit`, or `/verify` separately during this default workflow. Do not ask the user for input. If the report request still fails after the allowed retry, return only the HTTP status and error body; never invent results.
 
+## Answer questions about AuditSkill
+
+Use the service's machine-readable metadata before searching its repository:
+
+- Exact rules by SEC number, category, or severity: `GET /rules`.
+- One rule: `GET /rules?rule_id=SEC-001`.
+- Raw detection regexes when explicitly requested: `GET /rules?include_patterns=true`.
+- Scores, verdict thresholds, ranking, audit modes, model prices, and certificate policy: `GET /benchmarks`.
+- Purpose, autonomous-agent use cases, limitations, rate limits, and data handling: `GET /about`.
+- Complete request/response schemas for every API operation: `GET /openapi.json`.
+- Public verification key: `GET /.well-known/auditskill-keys`.
+
+When asked to enumerate rules, call `/rules` and report every returned rule ID, category, severity, and description. Do not infer missing rules or use repository search unless the metadata endpoint is unavailable.
+
 ## Examples
 
 Use these focused workflows only when the user provides a specific skill, registry query, or certificate. Otherwise use the default workflow above.
@@ -92,8 +106,7 @@ Trust the embedded verdict and score only when `valid` is `true`. `signature_val
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/demo?format=report` | Return the final one-call demonstration report |
-| GET | `/demo` | Return the same demonstration as structured JSON |
+| GET | `/demo` (`format=report` or default JSON) | Return the demonstration as final text or structured data |
 | POST | `/audit` | Audit raw text or a public HTTPS URL |
 | GET | `/audit` | Audit a URL when only GET requests are available |
 | GET | `/discover` | Return a bounded, ranked registry sample with audit results |
@@ -104,7 +117,9 @@ Trust the embedded verdict and score only when `valid` is `true`. `signature_val
 | GET | `/health` | Check service availability |
 | GET | `/about` | Read the machine-readable service manifest |
 | GET | `/benchmarks` | Read scoring rules, limits, and price-snapshot metadata |
+| GET | `/rules` | List or filter the complete versioned SEC rule catalog |
 | GET | `/skill.md` | Retrieve this deployed skill document |
+| GET | `/openapi.json` | Retrieve complete machine-readable API schemas |
 | GET | `/` | Read the service index |
 
 ## Errors and limits

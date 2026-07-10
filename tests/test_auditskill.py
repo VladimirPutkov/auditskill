@@ -678,9 +678,39 @@ def test_http_infra_routes():
 
         r = client.get("/about")
         assert r.status_code == 200 and r.json()["service"] == "AuditSkill"
+        assert r.json()["question_routing"]["exact_rule_ids_and_descriptions"] == ("GET /rules")
+        assert r.json()["question_routing"]["complete_request_and_response_schemas"] == (
+            "GET /openapi.json"
+        )
+        assert r.json()["data_handling"]["raw_skill_document_persisted"] is False
+
+        r = client.get("/rules")
+        assert r.status_code == 200
+        catalog = r.json()
+        assert catalog["total_rules_in_ruleset"] == catalog["returned"] == 34
+        assert [rule["rule_id"] for rule in catalog["rules"]] == [
+            f"SEC-{number:03d}" for number in range(1, 35)
+        ]
+        assert all("pattern" not in rule for rule in catalog["rules"])
+
+        r = client.get("/rules?rule_id=sec-001&include_patterns=true")
+        assert r.status_code == 200
+        assert r.json()["returned"] == 1
+        assert r.json()["rules"][0]["rule_id"] == "SEC-001"
+        assert r.json()["rules"][0]["pattern"]
+
+        r = client.get("/rules?rule_id=SEC-999")
+        assert r.status_code == 404
 
         r = client.get("/benchmarks")
         assert r.status_code == 200 and r.json()["total_rules"] == 34
+        assert r.json()["rule_catalog"]["all_rules"] == "GET /rules"
+        assert len(r.json()["model_pricing"]) == 9
+        assert r.json()["certificate_policy"]["signature_algorithm"] == "Ed25519"
+
+        r = client.get("/openapi.json")
+        assert r.status_code == 200
+        assert {"/rules", "/audit", "/discover", "/verify"} <= set(r.json()["paths"])
 
 
 def test_http_get_audit_fallback(monkeypatch):
@@ -1244,7 +1274,9 @@ def test_skill_document_is_compact_and_avoids_attack_payloads():
         "/.well-known/auditskill-keys",
         "/health",
         "/about",
+        "/rules",
         "/benchmarks",
         "/skill.md",
+        "/openapi.json",
     ):
         assert endpoint in skill
