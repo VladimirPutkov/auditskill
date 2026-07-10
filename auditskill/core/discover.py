@@ -93,18 +93,34 @@ async def _audit_entry(
     entry: dict[str, Any], mode: str, store: AuditStore | None
 ) -> DiscoverResult:
     """Audit one registry entry and fold the verdict into a DiscoverResult."""
+    # Registry metadata is untrusted too. Scan it before constructing the
+    # response so poisoned names and descriptions are never echoed to agents.
+    meta_text = "\n".join(
+        str(entry.get(k) or "") for k in ("name", "author", "description", "tags")
+    )
+    meta_report = security_scanner.scan(meta_text)
+    meta_findings = [
+        finding for finding in meta_report.findings if finding.severity in ("critical", "high")
+    ]
+    unsafe_metadata = bool(meta_findings)
     base = DiscoverResult(
-        name=entry.get("name"),
-        author=entry.get("author"),
-        description=entry.get("description"),
+        name="[unsafe registry metadata withheld]" if unsafe_metadata else entry.get("name"),
+        author=None if unsafe_metadata else entry.get("author"),
+        description=None if unsafe_metadata else entry.get("description"),
         source_url=entry.get("source_url"),
-        tags=entry.get("tags"),
+        tags=None if unsafe_metadata else entry.get("tags"),
+        metadata_withheld=unsafe_metadata,
+        critical_findings=sum(1 for f in meta_findings if f.severity == "critical"),
+        high_findings=sum(1 for f in meta_findings if f.severity == "high"),
+        security_findings=len(meta_findings),
+        security_rule_ids=sorted({f.rule_id for f in meta_findings}),
     )
 
     skill_md, reason = await _resolve_skill_text(entry)
     if skill_md is None:
         base.audited = False
-        base.reason = reason
+        suffix = " Unsafe registry metadata was withheld." if unsafe_metadata else ""
+        base.reason = f"{reason or 'Skill unavailable'}.{suffix}".strip()
         return base
 
     try:
@@ -120,23 +136,19 @@ async def _audit_entry(
         base.reason = f"Audit error ({type(exc).__name__}): {exc}"
         return base
 
-    # The registry-supplied metadata (name/author/description/tags) is echoed
-    # back to the agent, so it is itself an injection-delivery surface.  Scan
-    # it too and fold any hit into the verdict — an unaudited registry blurb
-    # must never reach the agent as "pre-vetted" while carrying an injection.
-    meta_text = "\n".join(
-        str(entry.get(k) or "") for k in ("name", "author", "description", "tags")
-    )
-    meta_report = security_scanner.scan(meta_text)
-    meta_findings = [f for f in meta_report.findings if f.severity in ("critical", "high")]
-
     all_findings = list(result.security.findings) + meta_findings
     critical = sum(1 for f in all_findings if f.severity == "critical")
+    high = sum(1 for f in all_findings if f.severity == "high")
     base.audited = True
     base.verdict = result.verdict
     base.score = result.overall_score
     base.risk_level = result.security.risk_level
     base.critical_findings = critical
+    base.high_findings = high
+    base.security_findings = len(all_findings)
+    base.security_rule_ids = sorted({finding.rule_id for finding in all_findings})
+    base.skill_hash = result.skill_hash
+    base.cached = result.cached
 
     if meta_findings:
         # Downgrade only (never upgrade): poisoned metadata forces at least
@@ -145,15 +157,19 @@ async def _audit_entry(
         forced = "FAILS_BASIC_AUDIT" if critical else "REQUIRES_HUMAN_REVIEW"
         if _verdict_rank(forced) > _verdict_rank(base.verdict):
             base.verdict = forced
+        base.score = min(base.score or 100, 39 if critical else 69)
+        base.risk_level = "critical" if critical else "high"
+        # This certificate signs the document-only audit, not the combined
+        # metadata downgrade, so exposing it would misrepresent the result.
+        base.certificate_id = None
         base.reason = (
             f"Registry metadata contains a {'critical' if critical else 'high'}-"
             f"severity pattern ({meta_findings[0].rule_id}: "
-            f"{meta_findings[0].category}); treated as unsafe even though the "
-            "linked document scored higher."
+            f"{meta_findings[0].category}); metadata was withheld and the "
+            "combined result was downgraded."
         )
-    base.skill_hash = result.skill_hash
-    base.certificate_id = result.certificate_id
-    base.cached = result.cached
+    else:
+        base.certificate_id = result.certificate_id
 
     # Compact context-cost summary so the agent can weigh safety AND price
     # in one /discover call (core mission: pick the right skill to load).

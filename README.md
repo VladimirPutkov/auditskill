@@ -78,7 +78,7 @@ The supply-chain, agent-capture, and payment-safety categories came from auditin
 
 A domain-consistency check also flags any endpoint declared as `METHOD https://…` whose host differs from the skill's own Base URL — an undocumented-destination signal, without touching prose links.
 
-False-positive guard: patterns inside fenced code blocks and descriptive sections ("Limitations", "Detection Patterns") are excluded, so legitimate security tools are not flagged. Negated statements ("this skill does **not** override your system instructions") are explicitly excluded from the prompt-injection rules. This is regression-tested against the `benign_security_skill` and `supply_chain_skill` fixtures.
+Context handling: matches inside fenced code blocks or explicit security-documentation sections are retained, but high-confidence severities may be downgraded to a warning. Headings and fences are never allow-lists, so an author cannot make a dangerous pattern disappear by moving it under "Detection Patterns". Negated statements are excluded from the prompt-injection rules. This is regression-tested against benign fixtures and adversarial heading/code-block cases.
 
 ### Context hygiene
 
@@ -91,28 +91,28 @@ Every audit includes a `context_cost` object with a **per-model** breakdown:
   "density": "low",
   "per_model": [
     { "model": "claude-haiku-4-5", "tokens": 4421, "input_cost_usd": 0.004421, "window_pct": 2.21 },
-    { "model": "gemini-3", "tokens": 4000, "input_cost_usd": 0.056, "window_pct": 0.4 }
+    { "model": "gemini-3.1-pro-preview", "tokens": 4000, "input_cost_usd": 0.008, "window_pct": 0.4 }
   ],
   "error_margin_pct": 10,
-  "price_source": "AuditSkill built-in price table (as_of 2026-07-04)",
+  "price_source": "AuditSkill built-in price table (as_of 2026-07-10)",
   "recommendation": "This skill file is 4,200 tokens — larger than the ~1,500 token median. Information density is low."
 }
 ```
 
-Density is classified as `high`, `medium`, or `low` based on the ratio of useful signals (endpoints, examples, documented sections) to total tokens. Files above 3,000 tokens with low density are explicitly flagged.
+Density is classified as `high`, `medium`, or `low` from capped useful signals per 1,000 estimated tokens plus absolute size gates. Repeating examples or endpoints cannot make an oversized file appear dense. Files above 3,000 tokens are explicitly flagged.
 
-**Prices are self-contained.** Nine models are tracked across four families (Claude, OpenAI, Gemini, Llama — the full list is at `/benchmarks`). The dollar figures and context-window sizes come from AuditSkill's own maintained price table that ships inside the service — no dependency on any third-party skill or external feed. A security auditor must not trust an unaudited outside source for the numbers it reports, so the table is the single source of truth; `price_source` records its as-of date. Estimates therefore stay strictly offline and deterministic. Token counts are calibrated per model family (chars-per-token), honestly labelled with `error_margin_pct` — enough for a load/skip decision, with no heavyweight tokenizer dependency and no keys. Pass `model` to `/audit` to narrow the breakdown to your model; the answer is byte-identical for the same file.
+**Prices use a local snapshot.** Nine models are tracked across four families (Claude, OpenAI, Gemini, Llama — the full list is at `/benchmarks`). No audit waits on a pricing network call; `price_source` records the snapshot date, and `error_margin_pct` labels the heuristic uncertainty. Values can become stale and may differ from provider billing. Pass `model` to `/audit` to narrow the breakdown. Analysis is deterministic for a fixed service version and price snapshot.
 
 ### Ranked discovery — the decision engine
 
-`GET /discover` doesn't just list the registry with verdicts — it returns it **best-first**. Each entry gets a `rank` and a plain-language `rank_reason`. Passing skills lead, ordered by a published composite (`overall_score` + a density bonus of `+5 / 0 / -5` for high/medium/low), with deterministic tie-breaks (score, then fewer critical findings, then name); failing skills follow; unauditable entries rank last with the reason. The formula is exposed verbatim at `/benchmarks` — no hidden magic. This is the core mission in one call: not "here's what exists", but "here's the safe skill to load, and why".
+`GET /discover` returns a bounded registry sample best-first. Verdict tier is the primary key: Basic Pass, Pass with Warnings, Human Review, Fail, then unaudited. Within a tier, the published composite (`overall_score` plus a density bonus of `+5 / 0 / -5`) and deterministic tie-breaks apply. Suspicious registry metadata is withheld instead of echoed. A warning can never outrank a Basic Pass, and `/demo` never automatically recommends a warning.
 
 ### Verdicts
 
 | Verdict | Condition | Agent action |
 |---|---|---|
-| `PASS_BASIC_AUDIT` | Score ≥ 85, no medium+ findings | Safe to use |
-| `PASS_WITH_WARNINGS` | Score ≥ 70, no high/critical | Usable with caution |
+| `PASS_BASIC_AUDIT` | Score ≥ 85, no medium+ findings | Passed this static ruleset; retain residual-risk caveat |
+| `PASS_WITH_WARNINGS` | Score ≥ 70, no high/critical | Inspect every warning; never auto-approve |
 | `REQUIRES_HUMAN_REVIEW` | Score ≥ 40, or any high finding | Escalate to human |
 | `FAILS_BASIC_AUDIT` | Score < 40, or any critical finding | Do not use |
 

@@ -58,10 +58,13 @@ _GLOBAL_LIVENESS_TIMEOUT = 25.0  # seconds — keep the whole audit under ~30s
 
 _VALID_MODES = ("safe_static", "liveness")
 
-# Context-cost density thresholds.
-# A "useful token" is estimated from endpoint count, examples, and structure.
-_TOKEN_HIGH_DENSITY_THRESHOLD = 0.08  # ≥8% of tokens map to useful info
-_TOKEN_LOW_DENSITY_THRESHOLD = 0.03  # <3% → bloated
+# Context-cost density thresholds, expressed as capped useful signals per
+# 1,000 estimated tokens. Absolute size gates prevent a repeated-example or
+# endpoint list from making a very large document appear dense.
+_TOKEN_HIGH_DENSITY_THRESHOLD = 8.0
+_TOKEN_LOW_DENSITY_THRESHOLD = 4.0
+_TOKEN_HIGH_DENSITY_MAX_SIZE = 3000
+_TOKEN_MEDIUM_DENSITY_MAX_SIZE = 6000
 _TOKENS_LARGE_SKILL = 3000  # above this, flag as large
 _FETCH_TIMEOUT = 10.0  # generous timeout for SKILL.md downloads
 # (free-tier hosts need cold-start time)
@@ -386,8 +389,8 @@ def _estimate_context_cost(
 
     # "Useful content" signals: endpoints, examples, documented sections
     useful_signals = (
-        len(parsed.endpoints) * 2
-        + parsed.example_count * 3
+        min(len(parsed.endpoints), 10) * 2
+        + min(parsed.example_count, 3) * 3
         + (1 if structure.has_name else 0)
         + (1 if structure.has_description else 0)
         + (1 if structure.has_endpoints else 0)
@@ -395,11 +398,11 @@ def _estimate_context_cost(
         + (1 if structure.has_auth_docs else 0)
         + (1 if structure.has_workflow else 0)
     )
-    density_ratio = useful_signals / max(1, tokens / 100)
+    density_ratio = useful_signals / max(1, tokens / 1000)
 
-    if density_ratio >= _TOKEN_HIGH_DENSITY_THRESHOLD:
+    if density_ratio >= _TOKEN_HIGH_DENSITY_THRESHOLD and tokens <= _TOKEN_HIGH_DENSITY_MAX_SIZE:
         density = "high"
-    elif density_ratio >= _TOKEN_LOW_DENSITY_THRESHOLD:
+    elif density_ratio >= _TOKEN_LOW_DENSITY_THRESHOLD and tokens <= _TOKEN_MEDIUM_DENSITY_MAX_SIZE:
         density = "medium"
     else:
         density = "low"

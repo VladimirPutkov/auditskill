@@ -153,6 +153,16 @@ class SecurityFinding(BaseModel):
         description="Unique identifier for the security rule (e.g. 'SEC-001').",
     )
     severity: Literal["critical", "high", "medium", "low"]
+    original_severity: Literal["critical", "high", "medium", "low"] | None = Field(
+        default=None,
+        description=(
+            "Rule severity before contextual downgrading. Null when no downgrade was applied."
+        ),
+    )
+    context: Literal["operational", "descriptive_documentation", "code_example"] = Field(
+        default="operational",
+        description="Context used to interpret the raw pattern match.",
+    )
     category: str = Field(
         ...,
         description="Category of the finding (e.g. 'credential_leak').",
@@ -292,6 +302,10 @@ class Certificate(BaseModel):
     """Ed25519-signed audit certificate."""
 
     certificate_id: str
+    schema_version: str
+    service_version: str
+    ruleset_version: str
+    ruleset_hash: str
     skill_name: str | None = None
     skill_hash: str = Field(
         ...,
@@ -415,6 +429,8 @@ class VerifyResponse(BaseModel):
     verdict: str | None = None
     score: int | None = None
     valid_until: str | None = None
+    ruleset_version: str | None = None
+    ruleset_hash: str | None = None
     error: str | None = None
 
 
@@ -461,6 +477,10 @@ class DiscoverResult(BaseModel):
     score: int | None = None
     risk_level: str | None = None
     critical_findings: int = 0
+    high_findings: int = 0
+    security_findings: int = 0
+    security_rule_ids: list[str] = Field(default_factory=list)
+    metadata_withheld: bool = False
     skill_hash: str | None = None
     certificate_id: str | None = None
     cached: bool = False

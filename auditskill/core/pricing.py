@@ -4,10 +4,9 @@ Answers the question at the heart of skill selection: *what does loading
 this SKILL.md actually cost on my model — in tokens, in dollars, and as a
 share of my context window?*
 
-Prices are maintained inside AuditSkill itself — a self-contained table with
-no dependency on any third-party skill or external feed.  A security auditor
-must not trust an unaudited outside source for the numbers it reports, so the
-price table ships with the service and is the single source of truth.
+Prices are maintained as a versioned local snapshot. Audit requests never
+depend on a pricing network call, but the estimates can become stale and are
+reported with their snapshot date and error margin.
 
 Design invariants:
 
@@ -59,13 +58,13 @@ class ModelPrice:
 # AuditSkill's own maintained price table: input $/1k tokens and context
 # window (in thousands of tokens).  Self-contained — no external feed.
 # Hand-verified as_of the date below; update this table when prices change.
-_FALLBACK_AS_OF = "2026-07-09"
+_FALLBACK_AS_OF = "2026-07-10"
 _FALLBACK_PRICES: dict[str, ModelPrice] = {
     "claude-fable-5": ModelPrice("claude-fable-5", "claude", 0.01, 1000),
     "claude-opus-4-8": ModelPrice("claude-opus-4-8", "claude", 0.005, 1000),
     "claude-sonnet-5": ModelPrice("claude-sonnet-5", "claude", 0.003, 1000),
     "claude-haiku-4-5": ModelPrice("claude-haiku-4-5", "claude", 0.001, 200),
-    "gemini-3": ModelPrice("gemini-3", "gemini", 0.002, 1000),
+    "gemini-3.1-pro-preview": ModelPrice("gemini-3.1-pro-preview", "gemini", 0.002, 1000),
     "gpt-4o": ModelPrice("gpt-4o", "openai", 0.0025, 128),
     "gpt-4o-mini": ModelPrice("gpt-4o-mini", "openai", 0.00015, 128),
     "o3": ModelPrice("o3", "openai", 0.002, 200),
@@ -87,11 +86,9 @@ TRACKED_MODELS: tuple[str, ...] = tuple(sorted(_FALLBACK_PRICES))
 class PriceCache:
     """In-memory price table.  Reads are synchronous and never block.
 
-    The table is self-contained (see :data:`_FALLBACK_PRICES`).  There is no
-    background refresh and no outside call — AuditSkill is its own source of
-    truth for prices, which keeps every audit offline and deterministic and
-    means a security auditor never trusts an unaudited third party for the
-    numbers it reports.
+    The table is self-contained (see :data:`_FALLBACK_PRICES`). There is no
+    background refresh or request-time outside call, so an audit is
+    deterministic for a fixed service version and price snapshot.
     """
 
     def __init__(self) -> None:

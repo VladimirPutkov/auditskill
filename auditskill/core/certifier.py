@@ -16,11 +16,15 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from auditskill import __version__
 from auditskill.api.models import Certificate
 from auditskill.core.crypto import derive_public_key, sign_document, verify_signature
+from auditskill.rules.security_rules import get_all_rules
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,27 @@ logger = logging.getLogger(__name__)
 PRIVATE_KEY: str = os.environ.get("AUDITSKILL_PRIVATE_KEY", "")
 PUBLIC_KEY_ID: str = os.environ.get("AUDITSKILL_KEY_ID", "auditskill-2026-07")
 CERT_VALIDITY_DAYS: int = 7
+CERTIFICATE_SCHEMA_VERSION: str = "1"
+RULESET_VERSION: str = "2026-07-10"
+
+
+def _calculate_ruleset_hash() -> str:
+    """Return a stable digest of the security policy carried by a certificate."""
+    policy = [
+        {
+            "rule_id": rule.rule_id,
+            "category": rule.category,
+            "severity": rule.severity,
+            "pattern": rule.pattern,
+            "is_code_block_safe": rule.is_code_block_safe,
+        }
+        for rule in get_all_rules()
+    ]
+    encoded = json.dumps(policy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+RULESET_HASH: str = _calculate_ruleset_hash()
 
 
 def get_public_key() -> str:
@@ -147,6 +172,10 @@ def create_certificate(
     # sign the canonical JSON representation.
     cert_dict: dict[str, Any] = {
         "certificate_id": certificate_id,
+        "schema_version": CERTIFICATE_SCHEMA_VERSION,
+        "service_version": __version__,
+        "ruleset_version": RULESET_VERSION,
+        "ruleset_hash": RULESET_HASH,
         "skill_name": skill_name,
         "skill_hash": skill_hash,
         "mode": mode,
@@ -200,3 +229,107 @@ def verify_certificate(certificate: dict[str, Any], public_key_b64: str) -> bool
 
     signature_b64 = sig_raw.removeprefix("ed25519:")
     return verify_signature(certificate, signature_b64, public_key_b64)
+
+
+def verify_certificate_status(certificate: dict[str, Any], public_key_b64: str) -> dict[str, Any]:
+    """Verify signature, expiry, and the minimum certificate schema.
+
+    Trust-bearing verdict and score fields are returned only while the
+    certificate is both authentic and current.
+    """
+    cert_id = str(certificate.get("certificate_id", "") or "")
+    signature_valid = verify_certificate(certificate, public_key_b64)
+    if not signature_valid:
+        return {
+            "valid": False,
+            "signature_valid": False,
+            "expired": None,
+            "certificate_id": cert_id,
+            "verdict": None,
+            "score": None,
+            "valid_until": None,
+            "ruleset_version": None,
+            "ruleset_hash": None,
+            "error": (
+                "Signature verification failed - the certificate is not authentic "
+                "or has been modified. Do not trust its verdict or score."
+            ),
+        }
+
+    required_version_fields = (
+        "schema_version",
+        "service_version",
+        "ruleset_version",
+        "ruleset_hash",
+    )
+    missing_versions = [
+        field
+        for field in required_version_fields
+        if not isinstance(certificate.get(field), str) or not certificate.get(field)
+    ]
+    if missing_versions:
+        return {
+            "valid": False,
+            "signature_valid": True,
+            "expired": None,
+            "certificate_id": cert_id,
+            "verdict": None,
+            "score": None,
+            "valid_until": None,
+            "ruleset_version": None,
+            "ruleset_hash": None,
+            "error": (
+                "Certificate signature is authentic but required version fields "
+                f"are missing: {', '.join(missing_versions)}."
+            ),
+        }
+
+    valid_until = certificate.get("valid_until")
+    if not isinstance(valid_until, str) or not valid_until:
+        return {
+            "valid": False,
+            "signature_valid": True,
+            "expired": None,
+            "certificate_id": cert_id,
+            "verdict": None,
+            "score": None,
+            "valid_until": None,
+            "ruleset_version": str(certificate.get("ruleset_version") or "") or None,
+            "ruleset_hash": str(certificate.get("ruleset_hash") or "") or None,
+            "error": "Certificate signature is authentic but valid_until is missing.",
+        }
+
+    raw_expiry = valid_until[:-1] + "+00:00" if valid_until.endswith("Z") else valid_until
+    try:
+        expiry = datetime.fromisoformat(raw_expiry)
+    except ValueError:
+        return {
+            "valid": False,
+            "signature_valid": True,
+            "expired": None,
+            "certificate_id": cert_id,
+            "verdict": None,
+            "score": None,
+            "valid_until": valid_until,
+            "ruleset_version": str(certificate.get("ruleset_version") or "") or None,
+            "ruleset_hash": str(certificate.get("ruleset_hash") or "") or None,
+            "error": "Certificate signature is authentic but valid_until is not valid ISO-8601.",
+        }
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    expired = expiry <= datetime.now(timezone.utc)
+    raw_score = certificate.get("score")
+    return {
+        "valid": not expired,
+        "signature_valid": True,
+        "expired": expired,
+        "certificate_id": cert_id,
+        "verdict": None if expired else str(certificate.get("verdict", "") or ""),
+        "score": None if expired or not isinstance(raw_score, int) else raw_score,
+        "valid_until": valid_until,
+        "ruleset_version": str(certificate.get("ruleset_version") or "") or None,
+        "ruleset_hash": str(certificate.get("ruleset_hash") or "") or None,
+        "error": (
+            f"Certificate signature is authentic but expired at {valid_until}." if expired else None
+        ),
+    }

@@ -36,7 +36,7 @@ from auditskill.api.models import (
 from auditskill.core import pricing
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
 from auditskill.core.demo import run_demo
-from auditskill.core.certifier import get_public_key, verify_certificate
+from auditskill.core.certifier import get_public_key, verify_certificate_status
 from auditskill.core.discover import DENSITY_BONUS, discover
 from auditskill.core.ssrf_guard import SSRFBlockedError
 from auditskill.rules.quality_benchmarks import SCORING_WEIGHTS
@@ -49,22 +49,6 @@ MAX_ENDPOINTS = 15
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _is_expired(valid_until: Any) -> bool:
-    """Return True if *valid_until* (ISO-8601) is in the past. Unparseable → not expired."""
-    if not isinstance(valid_until, str) or not valid_until:
-        return False
-    from datetime import datetime, timezone
-
-    raw = valid_until[:-1] + "+00:00" if valid_until.endswith("Z") else valid_until
-    try:
-        dt = datetime.fromisoformat(raw)
-    except ValueError:
-        return False
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt < datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -202,64 +186,17 @@ async def verify_cert(request: Request, body: VerifyRequest) -> VerifyResponse:
 
         certificate: dict[str, Any] = body.certificate
 
-        # certificate_id is a harmless opaque label — safe to echo so the
-        # caller can correlate the answer.  verdict/score are the trust-
-        # bearing claims and are echoed ONLY when the signature is valid;
-        # on any failure they are withheld (returning null) so a naive agent
-        # can never read a tampered "PASS_BASIC_AUDIT / 99" back out of a
-        # certificate that did not verify.
-        cert_id = str(certificate.get("certificate_id", "") or "")
-
         raw_signature = certificate.get("signature", "")
         if not raw_signature:
             return VerifyResponse(
                 valid=False,
                 signature_valid=False,
-                certificate_id=cert_id,
+                certificate_id=str(certificate.get("certificate_id", "") or ""),
                 verdict=None,
                 score=None,
                 error="Certificate has no 'signature' field — nothing to verify.",
             )
-
-        # Pass the FULL certificate (signature included): verify_certificate
-        # reads the signature out and canonicalises the rest itself.  Stripping
-        # the signature here would make verification always fail.
-        signature_valid = verify_certificate(certificate, public_key_b64)
-
-        if not signature_valid:
-            return VerifyResponse(
-                valid=False,
-                signature_valid=False,
-                certificate_id=cert_id,
-                verdict=None,
-                score=None,
-                error=(
-                    "Signature verification failed — the certificate is not "
-                    "authentic or has been modified since it was issued. Do not "
-                    "trust its verdict or score."
-                ),
-            )
-
-        # Signature authentic — now check expiry.  `valid` means "trust it":
-        # authentic AND not past valid_until.  An expired-but-authentic cert is
-        # signature_valid=True, expired=True, valid=False.
-        valid_until = certificate.get("valid_until")
-        expired = _is_expired(valid_until)
-        raw_score = certificate.get("score")
-        return VerifyResponse(
-            valid=not expired,
-            signature_valid=True,
-            expired=expired,
-            certificate_id=cert_id,
-            verdict=str(certificate.get("verdict", "") or ""),
-            score=raw_score if isinstance(raw_score, int) else None,
-            valid_until=str(valid_until) if valid_until else None,
-            error=(
-                None
-                if not expired
-                else f"Certificate signature is authentic but expired at {valid_until}."
-            ),
-        )
+        return VerifyResponse(**verify_certificate_status(certificate, public_key_b64))
 
     except HTTPException:
         raise
@@ -430,16 +367,15 @@ async def skill_md() -> PlainTextResponse:
     "/demo",
     summary="Run the end-to-end demonstration server-side",
     description=(
-        "Runs the whole AuditSkill story in one call: scans the live registry "
-        "(ranked), audits a built-in mock attack to show detection, and verifies "
-        "the resulting certificate. Returns an interpreted, render-ready result. "
-        "The mock attack lives on the server, so no malicious text is placed in "
-        "the caller's context window."
+        "One request runs three service operations: a sampled /discover pipeline "
+        "over the live registry, an /audit pipeline over a server-side synthetic "
+        "fixture, and a /verify pipeline over the resulting certificate. The "
+        "response is structured for direct reporting and never returns the fixture text."
     ),
 )
 @limiter.limit("5/minute")
 async def demo(request: Request) -> dict[str, Any]:
-    """Server-side Scenario-0 orchestration (one call for a vanilla agent)."""
+    """One-call demonstration for a vanilla agent."""
     store = request.app.state.store
     try:
         return await run_demo(store)
@@ -607,15 +543,31 @@ async def benchmarks() -> dict[str, Any]:
         "security_categories": categories,
         "total_rules": len(all_rules),
         "discover_ranking": {
-            "composite": "overall_score + density_bonus",
-            "density_bonus": DENSITY_BONUS,
-            "tie_break": ["overall_score desc", "critical_findings asc", "name asc"],
-            "excluded": (
-                "FAILS_BASIC_AUDIT entries are never ranked above passing "
-                "entries; unaudited entries always rank last (with a reason)"
+            "primary": (
+                "verdict tier: PASS_BASIC_AUDIT, PASS_WITH_WARNINGS, "
+                "REQUIRES_HUMAN_REVIEW, FAILS_BASIC_AUDIT, unaudited"
             ),
+            "within_tier_composite": "overall_score + density_bonus",
+            "density_bonus": DENSITY_BONUS,
+            "tie_break": [
+                "within-tier composite desc",
+                "overall_score desc",
+                "critical_findings asc",
+                "name asc",
+            ],
+            "automatic_recommendation": "PASS_BASIC_AUDIT only",
+        },
+        "context_density": {
+            "signal_caps": {"endpoints": 10, "examples": 3},
+            "high": ">= 8 signals/1k tokens and <= 3000 tokens",
+            "medium": ">= 4 signals/1k tokens and <= 6000 tokens",
+            "low": "everything else",
         },
         "context_cost_models": pricing.known_models(),
+        "price_snapshot": {
+            "source": pricing.price_cache.source,
+            "error_margin_pct": pricing.ERROR_MARGIN_PCT,
+        },
         "limits": {
             "max_skill_input_bytes": MAX_SKILL_INPUT_BYTES,
             "max_endpoints": MAX_ENDPOINTS,

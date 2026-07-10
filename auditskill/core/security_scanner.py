@@ -327,58 +327,71 @@ def scan(
     for rule in rules:
         compiled = rule.compiled  # process-cached compile (see security_rules)
         for idx, line in enumerate(lines):
-            # (1) Descriptive-section suppression is independent of code-block
-            #     safety: a skill that *lists* attack patterns under a heading
-            #     like "Detection Patterns" / "Examples" / "Limitations" is
-            #     documenting them, not instructing them.  Only the categories
-            #     in _DESCRIPTIVE_SKIP_CATEGORIES are eligible.
-            if rule.category in _DESCRIPTIVE_SKIP_CATEGORIES and idx in descriptive_lines:
+            raw_candidates = {line, _normalize_for_matching(line)}
+            if not any(compiled.search(candidate) for candidate in raw_candidates):
                 continue
 
-            if rule.is_code_block_safe:
-                # Code-block-safe rules describe patterns that also appear
-                # legitimately in fenced/inline code (e.g. a long Base64 blob,
-                # an HTML-comment example).  Ignore matches inside code.
-                if idx in code_block_lines:
-                    continue
-                stripped = _strip_inline_code(line)
-                candidates = {stripped, _normalize_for_matching(stripped)}
-            else:
-                # Code-block-UNSAFE rules are dangerous regardless of fences —
-                # real malicious commands (rm -rf, DROP TABLE, pip install from
-                # a URL, "ignore all previous instructions", curl -d token=…)
-                # LIVE inside code blocks.  Scan the raw line (plus an
-                # evasion-normalised copy) so a fenced or inline-code payload is
-                # still caught.  Legitimate documentation of these patterns is
-                # covered by the descriptive-section check above.
-                candidates = {line, _normalize_for_matching(line)}
+            context: Literal["operational", "descriptive_documentation", "code_example"] = (
+                "operational"
+            )
+            finding_severity = rule.severity
 
-            if any(compiled.search(c) for c in candidates):
-                rules_triggered.add(rule.rule_id)
-                findings.append(
-                    SecurityFinding(
-                        rule_id=rule.rule_id,
-                        severity=rule.severity,
-                        category=rule.category,
-                        detail=f"{rule.description} (matched on line {idx + 1})",
-                        line=idx + 1,
-                    )
+            # Context lowers confidence; it never erases a dangerous match.
+            # An author controls headings and fences, so treating either as an
+            # allow-list lets an attack document pass cleanly.
+            if rule.category in _DESCRIPTIVE_SKIP_CATEGORIES and idx in descriptive_lines:
+                context = "descriptive_documentation"
+            elif rule.is_code_block_safe and idx in code_block_lines:
+                context = "code_example"
+            elif rule.is_code_block_safe:
+                stripped = _strip_inline_code(line)
+                stripped_candidates = {stripped, _normalize_for_matching(stripped)}
+                if not any(compiled.search(candidate) for candidate in stripped_candidates):
+                    context = "code_example"
+
+            original_severity = None
+            if context != "operational" and finding_severity in {"critical", "high"}:
+                original_severity = finding_severity
+                finding_severity = "medium"
+
+            rules_triggered.add(rule.rule_id)
+            findings.append(
+                SecurityFinding(
+                    rule_id=rule.rule_id,
+                    severity=finding_severity,
+                    original_severity=original_severity,
+                    category=rule.category,
+                    context=context,
+                    detail=f"{rule.description} (matched on line {idx + 1})",
+                    line=idx + 1,
                 )
+            )
 
     # --- 1b. Base64-smuggled instruction decoding --------------------------
     # Short Base64 blobs slip under SEC-018's length bar; decode candidate
-    # tokens (outside code blocks) and flag any that decode to an injection.
+    # tokens and flag any that decode to an injection.  Context can reduce
+    # confidence, but fences and headings cannot suppress the finding.
     for idx, line in enumerate(lines):
-        if idx in code_block_lines:
-            continue
         decoded = _decode_base64_injection(line)
         if decoded is not None:
+            context: Literal["operational", "descriptive_documentation", "code_example"] = (
+                "operational"
+            )
+            decoded_severity: Literal["high", "medium"] = "high"
+            if idx in descriptive_lines:
+                context = "descriptive_documentation"
+                decoded_severity = "medium"
+            elif idx in code_block_lines:
+                context = "code_example"
+                decoded_severity = "medium"
             rules_triggered.add("SEC-018B")
             findings.append(
                 SecurityFinding(
                     rule_id="SEC-018B",
-                    severity="high",
+                    severity=decoded_severity,
+                    original_severity=("high" if decoded_severity == "medium" else None),
                     category="hidden_instructions",
+                    context=context,
                     detail=(
                         "Base64-encoded string decodes to an injection-like "
                         f"instruction ({decoded[:60]!r}) (matched on line {idx + 1})"
@@ -401,11 +414,11 @@ def scan(
                 if dedup_key in seen_url_findings:
                     continue
                 seen_url_findings.add(dedup_key)
-                severity = _url_severity(reason)
+                url_severity = _url_severity(reason)
                 findings.append(
                     SecurityFinding(
                         rule_id=_url_rule_id(reason),
-                        severity=severity,
+                        severity=url_severity,
                         category="suspicious_url",
                         detail=f"Suspicious URL ({reason}): {url} (line {idx + 1})",
                         line=idx + 1,
