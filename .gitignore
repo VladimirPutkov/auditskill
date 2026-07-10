@@ -41,3 +41,8 @@ code-review/
 
 # Submission package (contains private email - never push)
 submission/
+
+# Old review/audit docs (local reference only)
+AUDIT_FINDINGS.md
+AUDIT_REPORT.md
+DEPLOY.md
