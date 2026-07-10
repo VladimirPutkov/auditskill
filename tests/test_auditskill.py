@@ -1012,6 +1012,17 @@ async def test_demo_detects_mock_and_signs(monkeypatch):
 
     result = await demo_mod.run_demo(store=None)
     assert result["demo"]["external_requests_required"] == 1
+    for category in (
+        "prompt injection",
+        "data exfiltration",
+        "unsafe operations",
+        "hidden instructions",
+        "scope creep",
+        "supply-chain compromise",
+        "agent capture",
+        "payment abuse",
+    ):
+        assert category in result["service_claim"]
     assert result["registry_discovery"]["available"] is False
     ad = result["detection_test"]
     assert ad["verdict"] == "FAILS_BASIC_AUDIT"
@@ -1094,10 +1105,82 @@ async def test_demo_never_auto_recommends_warning(monkeypatch):
     monkeypatch.setattr(cert_mod, "PRIVATE_KEY", private_key)
     result = await demo_mod.run_demo(store=None)
     registry = result["registry_discovery"]
+    assert "as_of" in registry["context_cost_basis"]["price_source"]
+    assert registry["context_cost_basis"]["error_margin_pct"] == 10
     assert registry["automatic_recommendation"] is False
     assert registry["load_candidate"] is None
     assert registry["best_available"]["name"] == "Warning Only"
     assert "not auto-approved" in registry["best_available"]["interpretation"]
+    report = demo_mod.render_demo_report(result)
+    assert report.startswith("AUDITSKILL LIVE DEMONSTRATION\n")
+    assert report.count("AUDITSKILL LIVE DEMONSTRATION") == 1
+    assert "Automatic recommendation: none." in report
+    assert "recommendation_reason" not in report
+    assert ".." not in report
+    assert "{" not in report and "}" not in report
+
+
+async def test_demo_report_format_returns_plain_text(monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi.responses import PlainTextResponse
+    from starlette.requests import Request
+
+    import auditskill.api.routes as routes
+
+    payload = {
+        "demo": {"invocation": "GET /demo"},
+        "problem_evidence": "Evidence.",
+        "service_claim": "Claim.",
+        "registry_discovery": {
+            "available": False,
+            "operation": "GET /discover pipeline",
+            "error": "registry unavailable",
+        },
+        "detection_test": {
+            "fixture_id": "fixture",
+            "synthetic": True,
+            "payload_returned": False,
+            "verdict": "FAILS_BASIC_AUDIT",
+            "score": 1,
+            "findings": [],
+            "execution": "audited as inert text",
+        },
+        "certificate_verification": {
+            "valid": False,
+            "signature_valid": False,
+            "expired": None,
+            "error": "no certificate",
+        },
+        "elapsed_ms": 10,
+        "service_endpoints": {
+            "audit_one": "POST /audit",
+            "discover": "GET /discover",
+            "verify": "POST /verify",
+            "health": "GET /health",
+        },
+    }
+
+    async def _demo(_store):
+        return payload
+
+    monkeypatch.setattr(routes, "run_demo", _demo)
+    app = SimpleNamespace(state=SimpleNamespace(store=None))
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/demo",
+            "headers": [],
+            "query_string": b"format=report",
+            "app": app,
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+    response = await routes.demo(request, format="report")
+    assert isinstance(response, PlainTextResponse)
+    assert response.media_type == "text/plain"
+    assert response.body.startswith(b"AUDITSKILL LIVE DEMONSTRATION")
 
 
 def test_signed_certificate_without_valid_expiry_is_not_valid(monkeypatch):
@@ -1147,4 +1230,21 @@ def test_skill_document_is_compact_and_avoids_attack_payloads():
     assert "ignore all previous instructions" not in skill.lower()
     assert "rm -rf" not in skill.lower()
     assert "exactly one external request" in skill.lower()
-    assert "pass_with_warnings` is not a clean pass" in skill.lower()
+    assert "pass_with_warnings`: show every warning" in skill.lower()
+    assert "require an explicit user decision" in skill.lower()
+    assert "return its body verbatim" in skill.lower()
+    assert "never include raw json" in skill.lower()
+    for endpoint in (
+        "/demo",
+        "/audit",
+        "/discover",
+        "/verify",
+        "/certificate/{certificate_id}",
+        "/certificates?skill_hash={sha256-hash}",
+        "/.well-known/auditskill-keys",
+        "/health",
+        "/about",
+        "/benchmarks",
+        "/skill.md",
+    ):
+        assert endpoint in skill

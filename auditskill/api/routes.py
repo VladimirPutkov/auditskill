@@ -35,7 +35,7 @@ from auditskill.api.models import (
 )
 from auditskill.core import pricing
 from auditskill.core.auditor import fetch_skill_from_url, run_audit
-from auditskill.core.demo import run_demo
+from auditskill.core.demo import render_demo_report, run_demo
 from auditskill.core.certifier import get_public_key, verify_certificate_status
 from auditskill.core.discover import DENSITY_BONUS, discover
 from auditskill.core.ssrf_guard import SSRFBlockedError
@@ -359,12 +359,13 @@ async def skill_md() -> PlainTextResponse:
 
 
 # ---------------------------------------------------------------------------
-# GET /health
+# GET /demo
 # ---------------------------------------------------------------------------
 
 
 @router.get(
     "/demo",
+    response_model=None,
     summary="Run the end-to-end demonstration server-side",
     description=(
         "One request runs three service operations: a sampled /discover pipeline "
@@ -374,11 +375,21 @@ async def skill_md() -> PlainTextResponse:
     ),
 )
 @limiter.limit("5/minute")
-async def demo(request: Request) -> dict[str, Any]:
+async def demo(
+    request: Request,
+    format: str = Query(
+        default="json",
+        pattern="^(json|report)$",
+        description="json for structured data; report for final plain text",
+    ),
+) -> dict[str, Any] | PlainTextResponse:
     """One-call demonstration for a vanilla agent."""
     store = request.app.state.store
     try:
-        return await run_demo(store)
+        result = await run_demo(store)
+        if format == "report":
+            return PlainTextResponse(render_demo_report(result))
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error running demo")
         raise HTTPException(status_code=500, detail=f"Demo error: {exc}") from exc
