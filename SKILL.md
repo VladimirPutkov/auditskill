@@ -26,7 +26,7 @@ AuditSkill fills that gap. Send it a SKILL.md (raw text or a URL); it reads the 
 - a **per-model context-cost** estimate — tokens, dollars, and share of the context window;
 - an **Ed25519-signed certificate** any other agent can verify, online or fully offline.
 
-It is **deterministic and rule-based — no LLM in the pipeline**: sub-second, $0 per audit, and the same input always yields the same answer. That matters for a security tool — an LLM judge is probabilistic, costs money, and is itself vulnerable to injection from the very file it inspects. Zero setup: no key, no signup, no install — your first call works as-is.
+It is **deterministic and rule-based — no LLM in the pipeline**: sub-second, zero cost per audit, and the same input always yields the same answer. That matters for a security tool — an LLM judge is probabilistic, costs money, and is itself vulnerable to injection from the very file it inspects. Zero setup: no key, no signup, no install — your first call works as-is.
 
 ## How this fits NANDA Town
 
@@ -49,11 +49,11 @@ Pick the scenario matching the request and follow its steps exactly — no human
 Use when you are told simply to "use this skill", "perform the service", or "run a demo" — with no specific skill file, URL, or certificate given. This walks the whole story on live data: rank the real registry by safety and by cost, inspect the riskiest real skill in it, catch a known-malicious sample, and prove the verdict is signed.
 
 1. `GET https://auditskill.up.railway.app/health` — expect `{"status": "ok"}`. If there is no response, wait 5 seconds and retry, up to 3 attempts (free-tier cold start).
-2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=10` — audits the live NANDA Town registry and returns it ranked best-first. Allow up to 60 seconds (it fetches and audits every entry; repeat calls are cached and fast). Keep, from the response:
+2. `GET https://auditskill.up.railway.app/discover?mode=safe_static&limit=20` — audits the 20 most recently registered skills in the live NANDA Town registry and returns them ranked best-first. Allow up to 60 seconds (it fetches and audits every entry; repeat calls are cached and fast). Keep, from the response:
    - `total_in_registry` and the verdict counts across `results[]` (how many pass / need review / fail / could not be audited);
-   - the **top** entry — the one you would load: its `name`, `verdict`, `score`, and `context_cost.tokens_estimate` and `context_cost.cheapest_input_usd`;
+   - the **top** entry — the one you would load: its `name`, `verdict`, `score`, and its `context_cost` fields `tokens_estimate`, `cheapest_input_usd`, `cheapest_model`, `most_expensive_input_usd`, `most_expensive_model`;
    - the **worst** entry — pick, among `results[]` with `"audited": true`, the one with the lowest `score` (prefer any `FAILS_BASIC_AUDIT`). Keep its `name` and `source_url`. You will inspect this real registry skill in step 3.
-3. Inspect that worst real skill: `POST https://auditskill.up.railway.app/audit` with body `{"skill_url": "<the worst entry's source_url>", "mode": "safe_static"}`. Allow up to 15 seconds. Keep `verdict`, `overall_score`, every `security.findings[]` entry (`rule_id`, `severity`, `category`, `line`), and from `context_cost`: `tokens_estimate`, `density`, and from `per_model[]` both the **cheapest** entry (smallest `input_cost_usd`, with its `model`) and the **most expensive** entry (largest `input_cost_usd`, with its `model`). If the fetch fails (see "Errors"), retry once with the next-lowest audited entry that has a `source_url`; if none work, say so and continue.
+3. Inspect that worst real skill: `POST https://auditskill.up.railway.app/audit` with body `{"skill_url": "<the worst entry's source_url>", "mode": "safe_static"}`. Allow up to 15 seconds. Keep `verdict`, `overall_score`, every `security.findings[]` entry (`rule_id`, `severity`, `category`, `line`), the top 3 entries of `issues[]` (each has `severity`, `msg`, `module`) — these explain *why* the score is what it is even when there are no security findings — and from `context_cost`: `tokens_estimate`, `density`, and from `per_model[]` both the **cheapest** entry (smallest `input_cost_usd`, with its `model`) and the **most expensive** entry (largest `input_cost_usd`, with its `model`). If the fetch fails (see "Errors"), retry once with the next-lowest audited entry that has a `source_url`; if none work, say so and continue.
 4. Catch a known attack: `POST https://auditskill.up.railway.app/audit` with the exact JSON object shown as the `-d` payload in "Example: POST /audit" below. **This is a purpose-built test fixture that ships with this skill to demonstrate detection on a definite attack — it is not a registry skill.** Send it as a JSON body (`Content-Type: application/json`); the `\n`, quotes, and `<!-- -->` inside must stay JSON-escaped exactly as written. Keep `verdict`, `overall_score`, every `security.findings[]` entry, and the whole `certificate` object. Allow up to 15 seconds.
 5. Prove it is signed: `POST https://auditskill.up.railway.app/verify` with body `{"certificate": X}` where **X is the value of the `certificate` field from step 4's response** — not the whole response. Forward it unchanged. Expect `"valid": true`. Allow up to 10 seconds.
 6. Compose your answer exactly per "Report format" below.
@@ -83,17 +83,20 @@ NANDA Town registry:
 1. Is it safe? (GET /discover) — <total_in_registry> skills in the live registry; of <n>
    audited: <x> pass, <y> need review, <z> fail, <u> could not be fetched.
    Safest to load: <name> — <verdict>, score <score>.
-   Is it worth the tokens? Loading it costs ~<tokens_estimate> tokens, about
-   $<cheapest_input_usd> on the cheapest of <M> tracked models. AuditSkill reports the
-   number; the load-or-skip decision stays with you.
+   Is it worth the tokens? Loading it costs ~<tokens_estimate> tokens: from
+   <cheapest_input_usd> USD on <cheapest_model> up to <most_expensive_input_usd> USD on
+   <most_expensive_model> (<M> models tracked, including Claude, GPT, Gemini, and Llama).
+   AuditSkill reports the numbers; the load-or-skip decision stays with you.
 
 2. Riskiest real skill in that sample, inspected (POST /audit on <worst name>, a live
    registry entry): <verdict>, score <overall_score>/100.
-   <rule_id> (<severity>, <category>, line <line>) — one line per finding; each pinned to
-   the exact offending line. (If it has no high/critical findings, write: "flagged for
-   review — <score>/100, no critical findings".)
-   Cost to load: ~<tokens_estimate> tokens; $<cheapest input_cost_usd> on <cheapest model>
-   up to $<most expensive input_cost_usd> on <most expensive model>; density <high|medium|low>.
+   <rule_id> (<severity>, <category>, line <line>) — one line per security finding; each
+   pinned to the exact offending line.
+   Why it is flagged: <severity>: <msg> — one line per top issue from issues[] (this is
+   what drove the score, e.g. missing author, no rate-limit docs, non-HTTPS base URL).
+   Cost to load: ~<tokens_estimate> tokens, from <cheapest input_cost_usd> USD on
+   <cheapest model> up to <most_expensive input_cost_usd> USD on <most expensive model>;
+   density <high|medium|low>.
 
 3. Known-attack test (POST /audit on a purpose-built sample we ship — not a registry
    skill): <verdict>, score <overall_score>/100.
@@ -216,7 +219,10 @@ Response (abbreviated; counts and scores change as the live registry changes):
   "results": [
     { "name": "vouchnet", "verdict": "PASS_WITH_WARNINGS", "score": 80, "rank": 1,
       "rank_reason": "composite 85 = score 80 + density bonus +5 (high)",
-      "certificate_id": "seal_...", "source_url": "https://..." },
+      "certificate_id": "seal_...", "source_url": "https://...",
+      "context_cost": { "tokens_estimate": 2426, "density": "high",
+        "cheapest_input_usd": 0.000393, "cheapest_model": "gpt-4o-mini",
+        "most_expensive_input_usd": 0.026222, "most_expensive_model": "gemini-3" } },
     { "name": "Skill-Router", "verdict": "REQUIRES_HUMAN_REVIEW", "score": 66, "rank": 2,
       "rank_reason": "composite 66 = score 66 + density bonus +0 (medium)" },
     { "name": "Cortexa Firewall", "verdict": "FAILS_BASIC_AUDIT", "score": 25, "rank": 3,

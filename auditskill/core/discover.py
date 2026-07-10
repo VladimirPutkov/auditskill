@@ -113,12 +113,19 @@ async def _audit_entry(
 
     # Compact context-cost summary so the agent can weigh safety AND price
     # in one /discover call (core mission: pick the right skill to load).
+    # Carry both ends of the price range with model names so an agent can
+    # answer "is it worth the tokens?" from the /discover response alone,
+    # without a second /audit for the per-model breakdown.
     cc = result.context_cost
-    cheapest = min((c.input_cost_usd for c in cc.per_model), default=None)
+    cheapest_entry = min(cc.per_model, key=lambda c: c.input_cost_usd, default=None)
+    priciest_entry = max(cc.per_model, key=lambda c: c.input_cost_usd, default=None)
     base.context_cost = {
         "tokens_estimate": cc.tokens_estimate,
         "density": cc.density,
-        "cheapest_input_usd": cheapest,
+        "cheapest_input_usd": cheapest_entry.input_cost_usd if cheapest_entry else None,
+        "cheapest_model": cheapest_entry.model if cheapest_entry else None,
+        "most_expensive_input_usd": priciest_entry.input_cost_usd if priciest_entry else None,
+        "most_expensive_model": priciest_entry.model if priciest_entry else None,
     }
     return base
 

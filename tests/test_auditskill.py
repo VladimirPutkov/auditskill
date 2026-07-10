@@ -701,3 +701,18 @@ def test_certificate_fields_are_ascii(monkeypatch):
     )
     for lim in cert.limitations:
         lim.encode("ascii")  # raises if any non-ASCII char remains
+
+
+async def test_discover_compact_cost_has_price_range(monkeypatch):
+    # /discover results must carry both ends of the price range with model
+    # names, so an agent answers "worth the tokens?" from discover alone.
+    from auditskill.core.discover import _audit_entry
+
+    entry = {"name": "X", "content": "# X\n\nDesc.\n\n## Base URL\nhttps://x.example.com\n\n## Endpoints\nGET /y"}
+    r = await _audit_entry(entry, mode="safe_static", store=None)
+    cc = r.context_cost
+    assert cc is not None
+    for k in ("cheapest_input_usd", "cheapest_model", "most_expensive_input_usd", "most_expensive_model"):
+        assert k in cc, f"missing {k}"
+    assert cc["most_expensive_input_usd"] >= cc["cheapest_input_usd"]
+    assert cc["cheapest_model"] and cc["most_expensive_model"]
